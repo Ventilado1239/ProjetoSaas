@@ -1,0 +1,141 @@
+@import "tailwindcss";
+
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+
+@theme {
+  --font-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  
+  --color-accent: hsl(var(--color-accent));
+  --color-accent-hover: hsl(var(--color-accent-hover));
+  --color-accent-light: hsl(var(--color-accent-light));
+  --color-success: hsl(var(--color-success));
+  --color-warning: hsl(var(--color-warning));
+  --color-danger: hsl(var(--color-danger));
+  --color-bg: hsl(var(--color-bg));
+  --color-surface: hsl(var(--color-surface));
+  --color-border: hsl(var(--color-border));
+  --color-text-primary: hsl(var(--color-text-primary));
+  --color-text-secondary: hsl(var(--color-text-secondary));
+  
+  --radius-small: 4px;
+  --radius-medium: 6px;
+  --radius-large: 10px;
+  --radius-full: 9999px;
+}
+
+/* Modo Clínica */
+[data-theme="clinica"] {
+  --color-accent: 221 83% 53%;        /* #2563eb */
+  --color-accent-hover: 221 83% 45%;
+  --color-accent-light: 214 100% 97%;
+  --color-success: 142 71% 45%;
+  --color-warning: 38 92% 50%;
+  --color-danger: 0 72% 51%;
+  --color-bg: 240 5% 96%;             /* #f4f4f5 */
+  --color-surface: 0 0% 100%;
+  --color-border: 240 6% 90%;
+  --color-text-primary: 240 10% 4%;
+  --color-text-secondary: 240 4% 46%;
+}
+
+/* Modo Loja */
+[data-theme="loja"] {
+  --color-accent: 262 83% 58%;        /* roxo vibrante */
+  --color-accent-hover: 262 83% 50%;
+  --color-accent-light: 262 100% 97%;
+  --color-success: 142 71% 45%;
+  --color-warning: 38 92% 50%;
+  --color-danger: 0 72% 51%;
+  --color-bg: 240 5% 96%;
+  --color-surface: 0 0% 100%;
+  --color-border: 240 6% 90%;
+  --color-text-primary: 240 10% 4%;
+  --color-text-secondary: 240 4% 46%;
+}
+
+:root {
+  /* Default to clinica */
+  --color-accent: 221 83% 53%;
+  --color-accent-hover: 221 83% 45%;
+  --color-accent-light: 214 100% 97%;
+  --color-success: 142 71% 45%;
+  --color-warning: 38 92% 50%;
+  --color-danger: 0 72% 51%;
+  --color-bg: 240 5% 96%;
+  --color-surface: 0 0% 100%;
+  --color-border: 240 6% 90%;
+  --color-text-primary: 240 10% 4%;
+  --color-text-secondary: 240 4% 46%;
+  
+  background-color: hsl(var(--color-bg));
+  color: hsl(var(--color-text-primary));
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-feature-settings: "cv11", "ss01";
+  text-rendering: optimizeLegibility;
+}
+
+/* Headings modern letters-spacing and fonts */
+h1, h2, h3, h4, h5, h6 {
+  letter-spacing: -0.011em;
+}
+
+/* Transições globais */
+* { transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); }
+
+/* Hover em cards */
+.card { transition: box-shadow 150ms, transform 150ms; }
+.card:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+
+/* Fade-in de telas */
+.page-enter { animation: fadeIn 200ms ease-out; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Shimmer de carregamento */
+.shimmer { 
+  background: linear-gradient(90deg, hsl(var(--color-bg)) 25%, hsl(var(--color-border)) 50%, hsl(var(--color-bg)) 75%); 
+  background-size: 200% 100%; 
+  animation: shimmer 1.5s infinite; 
+}
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* Sidebar item hover */
+.sidebar-item { transition: background-color 120ms, color 120ms; }
+
+/* Botão loading */
+.btn-loading { transition: opacity 150ms; opacity: 0.7; pointer-events: none; }
+
+/* Badge pulse para aprovações pendentes */
+.badge-urgent { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--color-border));
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--color-text-secondary) / 0.5);
+}
+
+.touch-target {
+  min-height: 44px;
+}
