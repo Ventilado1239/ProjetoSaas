@@ -1,4 +1,5 @@
 import asyncio
+import os
 import uuid
 from datetime import datetime, date, timedelta, timezone
 from sqlalchemy import text
@@ -12,6 +13,8 @@ from app.models.models import (
 )
 
 async def seed():
+    if os.getenv("ENVIRONMENT", "development").lower() == "production":
+        raise RuntimeError("seed_demo.py e destrutivo e nao pode ser executado em producao.")
     superuser_url = "postgresql+asyncpg://postgres:postgres@localhost:5432/projeto_saas"
     engine = create_async_engine(superuser_url)
     Session = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
@@ -25,6 +28,7 @@ async def seed():
             await session.execute(text("DELETE FROM aprovacoes;"))
             await session.execute(text("DELETE FROM estados_conversa;"))
             await session.execute(text("DELETE FROM token_blacklist;"))
+            await session.execute(text("DELETE FROM webhook_events;"))
             await session.execute(text("DELETE FROM logs_mensagens;"))
             await session.execute(text("DELETE FROM lista_espera;"))
             await session.execute(text("DELETE FROM itens_atendimento;"))
@@ -47,6 +51,8 @@ async def seed():
                     nome="Clínica Demo",
                     tipo="clinica",
                     whatsapp_numero="5511990000000",
+                    owner_whatsapp="5511990000000",
+                    evolution_instance_name=f"saas_tenant_{tenant_id}",
                     plano="starter",
                     sistema_ativo=True,
                     horario_abertura="08:00",
@@ -54,6 +60,20 @@ async def seed():
                     limite_pedido_grande=10,
                     cor_primaria="#2563eb"
                 )
+                session.add(tenant)
+                await session.flush()
+            else:
+                tenant.nome = "ClÃ­nica Demo"
+                tenant.tipo = "clinica"
+                tenant.whatsapp_numero = "5511990000000"
+                tenant.owner_whatsapp = "5511990000000"
+                tenant.evolution_instance_name = f"saas_tenant_{tenant_id}"
+                tenant.plano = "starter"
+                tenant.sistema_ativo = True
+                tenant.horario_abertura = "08:00"
+                tenant.horario_fechamento = "18:00"
+                tenant.limite_pedido_grande = 10
+                tenant.cor_primaria = "#2563eb"
                 session.add(tenant)
                 await session.flush()
 
@@ -68,9 +88,18 @@ async def seed():
                     tenant_id=tenant_id,
                     nome="Administrador",
                     email="admin@demo.com",
-                    senha_hash=get_password_hash("admin123"),
+                    senha_hash=get_password_hash("DemoSeguro2026"),
                     perfil="dono"
                 )
+                session.add(user)
+                await session.flush()
+            else:
+                user.tenant_id = tenant_id
+                user.nome = "Administrador"
+                user.senha_hash = get_password_hash("DemoSeguro2026")
+                user.perfil = "dono"
+                user.ativo = True
+                user.token_version += 1
                 session.add(user)
                 await session.flush()
 

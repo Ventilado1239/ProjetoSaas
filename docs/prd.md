@@ -452,8 +452,8 @@ JWT armazenado em httpOnly cookie — nunca localStorage.
 
 ### Asaas
 - Cobrança automática na data de vencimento de cada tenant
-- Webhook `payment.overdue` após 5 dias → `sistema_ativo = false` (kill switch)
-- Webhook `payment.received` → `sistema_ativo = true` (reativação automática)
+- Webhook `PAYMENT_OVERDUE` após 5 dias → `sistema_ativo = false` (kill switch)
+- Webhook `PAYMENT_RECEIVED` → `sistema_ativo = true` (reativação automática)
 - Cliente recebe WhatsApp automático em ambos os casos
 
 ---

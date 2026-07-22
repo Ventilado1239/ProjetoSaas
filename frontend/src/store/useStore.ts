@@ -15,7 +15,9 @@ import type {
   DashboardData
 } from '../types';
 
-type ApiError = { response?: { data?: { detail?: string } } };
+type ApiError = { response?: { status?: number; data?: { detail?: string } } };
+
+const isUnauthorized = (err: unknown) => (err as ApiError).response?.status === 401;
 
 export interface AppState {
   user: User | null;
@@ -95,7 +97,13 @@ export const useStore = create<AppState>((set, get) => {
   if (typeof window !== 'undefined' && !(window as unknown as Record<string, boolean>).__authFailedListenerAdded) {
     (window as unknown as Record<string, boolean>).__authFailedListenerAdded = true;
     window.addEventListener('auth-failed', () => {
-      set({ user: null, isAuthenticated: false });
+      localStorage.removeItem('saas_user');
+      localStorage.removeItem('saas_auth');
+      set((state) => ({
+        user: null,
+        isAuthenticated: false,
+        error: { ...state.error, global: null }
+      }));
     });
   }
 
@@ -208,10 +216,29 @@ export const useStore = create<AppState>((set, get) => {
     checkAuth: async () => {
       if (!get().isAuthenticated) return false;
       try {
-        await get().fetchConfiguracoes();
+        const [meRes, res] = await Promise.all([
+          api.get('/auth/me'),
+          api.get('/configuracoes'),
+        ]);
+        localStorage.setItem('saas_user', JSON.stringify(meRes.data));
+        set((state) => ({
+          user: meRes.data,
+          isAuthenticated: true,
+          configuracoes: res.data,
+          tenant: {
+            ...state.tenant,
+            nome: res.data.tenant_nome || state.tenant.nome,
+            tipo: res.data.tenant_tipo || state.tenant.tipo,
+            corPrimaria: res.data.tenant_cor_primaria || state.tenant.corPrimaria,
+            logo_url: res.data.tenant_logo_url || state.tenant.logo_url,
+            sistemaAtivo: res.data.sistema_ativo,
+          },
+          error: { ...state.error, global: null }
+        }));
         return true;
       } catch {
         get().setUser(null);
+        set((state) => ({ error: { ...state.error, global: null } }));
         return false;
       }
     },
@@ -606,10 +633,25 @@ export const useStore = create<AppState>((set, get) => {
         const res = await api.get('/configuracoes');
         set((state) => ({ 
           configuracoes: res.data, 
-          tenant: { ...state.tenant, sistemaAtivo: res.data.sistema_ativo },
+          tenant: {
+            ...state.tenant,
+            nome: res.data.tenant_nome || state.tenant.nome,
+            tipo: res.data.tenant_tipo || state.tenant.tipo,
+            corPrimaria: res.data.tenant_cor_primaria || state.tenant.corPrimaria,
+            logo_url: res.data.tenant_logo_url || state.tenant.logo_url,
+            sistemaAtivo: res.data.sistema_ativo,
+          },
           loading: { ...state.loading, servicos: false } 
         }));
       } catch (err: unknown) {
+        if (isUnauthorized(err)) {
+          get().setUser(null);
+          set((state) => ({
+            loading: { ...state.loading, servicos: false },
+            error: { ...state.error, global: null }
+          }));
+          return;
+        }
         set((state) => ({ 
           loading: { ...state.loading, servicos: false }, 
           error: { 
@@ -629,7 +671,14 @@ export const useStore = create<AppState>((set, get) => {
         const res = await api.put('/configuracoes', config);
         set((state) => ({ 
           configuracoes: res.data, 
-          tenant: { ...state.tenant, sistemaAtivo: res.data.sistema_ativo },
+          tenant: {
+            ...state.tenant,
+            nome: res.data.tenant_nome || state.tenant.nome,
+            tipo: res.data.tenant_tipo || state.tenant.tipo,
+            corPrimaria: res.data.tenant_cor_primaria || state.tenant.corPrimaria,
+            logo_url: res.data.tenant_logo_url || state.tenant.logo_url,
+            sistemaAtivo: res.data.sistema_ativo,
+          },
           loading: { ...state.loading, submit: false } 
         }));
       } catch (err: unknown) {

@@ -91,6 +91,7 @@ export const Sidebar: React.FC = () => {
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
+                aria-current={isActive ? 'page' : undefined}
                 className={`w-full flex items-center justify-between h-10 px-3 rounded-medium transition-all cursor-pointer sidebar-item ${
                   isActive 
                     ? 'bg-accent-light text-accent font-semibold' 
@@ -126,6 +127,7 @@ export const Sidebar: React.FC = () => {
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
+                aria-current={isActive ? 'page' : undefined}
                 className={`w-full flex items-center justify-between h-10 px-3 rounded-medium transition-all cursor-pointer sidebar-item ${
                   isActive 
                     ? 'bg-accent-light text-accent font-semibold' 
@@ -157,6 +159,7 @@ export const Sidebar: React.FC = () => {
           <button 
             onClick={logout}
             title="Sair do sistema"
+            aria-label="Sair do sistema"
             className="p-2 text-text-secondary hover:text-danger hover:bg-rose-50 rounded-medium transition-all cursor-pointer"
           >
             <LogOut size={16} />

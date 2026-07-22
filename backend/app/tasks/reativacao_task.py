@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import AsyncSessionLocal
 from app.models.models import Tenant, ClientePaciente, LogMensagem
 from app.utils.mensagens import get_message
+from app.services.tenant_settings import get_evolution_instance_name
 from app.services.whatsapp_service import enviar_mensagem
 import app.services.whatsapp_service as ws
 
@@ -90,6 +91,7 @@ async def _run_reativacoes(db: AsyncSession):
                     
                 # Update status
                 client.status_reativacao = target_status
+                client.reativado_em = None
                 await db.flush()
                 
                 reply = get_message(
@@ -99,7 +101,12 @@ async def _run_reativacoes(db: AsyncSession):
                 )
                 
                 # Dispatch message
-                await enviar_mensagem(str(tenant.id), client.whatsapp, reply)
+                await enviar_mensagem(
+                    str(tenant.id),
+                    client.whatsapp,
+                    reply,
+                    instance_name=get_evolution_instance_name(tenant.id, tenant),
+                )
                 
                 # Log message history
                 log = LogMensagem(

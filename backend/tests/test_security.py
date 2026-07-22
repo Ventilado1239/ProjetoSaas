@@ -14,6 +14,7 @@ def reset_rate_limiter():
         if isinstance(current_app, SecurityAndRateLimitMiddleware):
             current_app.ip_limits.clear()
             current_app.tenant_limits.clear()
+            current_app.login_limits.clear()
             return
         current_app = getattr(current_app, "app", None)
 
@@ -27,7 +28,33 @@ async def test_security_headers(client: AsyncClient):
     assert headers.get("strict-transport-security") == "max-age=63072000; includeSubDomains; preload"
     assert headers.get("x-content-type-options") == "nosniff"
     assert headers.get("x-frame-options") == "DENY"
-    assert headers.get("content-security-policy") == "default-src 'self'; frame-ancestors 'none';"
+    assert headers.get("content-security-policy") == "default-src 'none'; frame-ancestors 'none'; base-uri 'none';"
+    assert headers.get("referrer-policy") == "no-referrer"
+    assert headers.get("permissions-policy") == "camera=(), microphone=(), geolocation=()"
+
+@pytest.mark.anyio
+async def test_rejects_unknown_browser_origin(client: AsyncClient):
+    response = await client.post("/health", headers={"Origin": "https://attacker.example"})
+    assert response.status_code == 403
+
+@pytest.mark.anyio
+async def test_whatsapp_webhook_rejects_invalid_secret(client: AsyncClient, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "EVOLUTION_WEBHOOK_SECRET", "a-secure-test-webhook-secret")
+    response = await client.post(
+        "/whatsapp/webhook",
+        headers={"X-Webhook-Secret": "wrong-secret"},
+        json={"instance": "saas_tenant_00000000-0000-0000-0000-000000000001", "data": {}},
+    )
+    assert response.status_code == 401
+
+@pytest.mark.anyio
+async def test_asaas_webhook_fails_closed_without_secret(client: AsyncClient, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "ASAAS_WEBHOOK_TOKEN", None)
+    monkeypatch.setattr(settings, "ASAAS_WEBHOOK_SECRET", None)
+    response = await client.post("/webhooks/asaas", json={"event": "PAYMENT_RECEIVED"})
+    assert response.status_code == 503
 
 @pytest.mark.anyio
 async def test_rate_limiting_ip(client: AsyncClient):
@@ -89,7 +116,7 @@ async def test_audit_logging_and_lgpd_erasure(client: AsyncClient, admin_session
     
     # Generate Bearer Token for this user
     from app.utils.security import create_access_token
-    token = create_access_token({"sub": str(user_id), "tenant_id": str(tenant_id)})
+    token = create_access_token({"sub": str(user_id), "tenant_id": str(tenant_id), "scope": "tenant", "ver": 0})
     headers = {"Authorization": f"Bearer {token}"}
     
     # 2. CREATE CLIENT (INSERT AUDIT)
@@ -138,8 +165,11 @@ async def test_audit_logging_and_lgpd_erasure(client: AsyncClient, admin_session
     )
     update_log = res.scalar_one_or_none()
     assert update_log is not None
-    assert "Unimed" in update_log.valores_novos
-    assert "Amil" in update_log.valores_antigos
+    assert "Unimed" not in update_log.valores_novos
+    assert "Paciente Seguro Editado" not in update_log.valores_novos
+    assert "[REDACTED]" in update_log.valores_novos
+    assert "Amil" not in update_log.valores_antigos
+    assert "[REDACTED]" in update_log.valores_antigos
     
     # Add dummy message logs for this patient's whatsapp
     msg_log = LogMensagem(
@@ -214,7 +244,7 @@ async def test_audit_logs_tenant_isolation(client: AsyncClient, admin_session: A
     
     # Log in as Tenant A
     from app.utils.security import create_access_token
-    token_a = create_access_token({"sub": str(user_a_id), "tenant_id": str(tenant_a_id)})
+    token_a = create_access_token({"sub": str(user_a_id), "tenant_id": str(tenant_a_id), "scope": "tenant", "ver": 0})
     headers_a = {"Authorization": f"Bearer {token_a}"}
     
     # Access the DB as Tenant A using a query that would yield all audit logs if RLS was disabled

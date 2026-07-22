@@ -128,7 +128,7 @@ python -m venv .venv
 # source .venv/bin/activate   # Linux/Mac
 
 # 3. Instalar dependências
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
 # 4. Configurar variáveis de ambiente
 cp .env.example .env

@@ -173,7 +173,7 @@
 
 - [x] **TASK-019** — Fluxo 12: Kill switch por inadimplência
   Files: `backend/app/routers/webhooks.py`, `backend/app/services/asaas_service.py`
-  Notes: POST /webhooks/asaas recebe eventos do Asaas. payment.overdue após 5 dias: SET sistema_ativo = false + WhatsApp para o dono com link de pagamento. payment.received: SET sistema_ativo = true + WhatsApp de confirmação de reativação. Validar assinatura do webhook do Asaas antes de processar.
+  Notes: POST /webhooks/asaas recebe eventos do Asaas. PAYMENT_OVERDUE após 5 dias: SET sistema_ativo = false + WhatsApp para o dono com link de pagamento. PAYMENT_RECEIVED: SET sistema_ativo = true + WhatsApp de confirmação de reativação. Validar o token do webhook do Asaas antes de processar.
   Verify: Simular webhook de inadimplência. sistema_ativo = false no banco. WhatsApp de bloqueio enviado. Simular pagamento. Sistema reativa automaticamente.
 
 - [x] **TASK-020** — Testes das automações críticas

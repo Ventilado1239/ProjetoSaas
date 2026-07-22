@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import AsyncSessionLocal
 from app.models.models import Tenant, AtendimentoPedido, ClientePaciente, ServicoProduto, EstadoConversa, LogMensagem, Aprovacao, ItemAtendimento
 from app.utils.mensagens import get_message
+from app.services.tenant_settings import get_evolution_instance_name
 from app.services.whatsapp_service import enviar_mensagem
 
 logger = logging.getLogger(__name__)
@@ -114,7 +115,12 @@ async def _run_confirmacoes(db: AsyncSession):
                 )
                 
                 # Send WhatsApp
-                await enviar_mensagem(str(tenant.id), client.whatsapp, reply)
+                await enviar_mensagem(
+                    str(tenant.id),
+                    client.whatsapp,
+                    reply,
+                    instance_name=get_evolution_instance_name(tenant.id, tenant),
+                )
                 
                 # Log message
                 log = LogMensagem(
@@ -155,7 +161,12 @@ async def _run_confirmacoes(db: AsyncSession):
                     
                     # Send final notification
                     reply = "Não conseguimos confirmar sua consulta de forma automática. Nossa equipe entrará em contato em breve para alinhar os detalhes! 📞"
-                    await enviar_mensagem(str(tenant.id), client.whatsapp, reply)
+                    await enviar_mensagem(
+                        str(tenant.id),
+                        client.whatsapp,
+                        reply,
+                        instance_name=get_evolution_instance_name(tenant.id, tenant),
+                    )
                     
                     log = LogMensagem(
                         id=uuid.uuid4(),
@@ -181,7 +192,12 @@ async def _run_confirmacoes(db: AsyncSession):
                         data_hora=formatted_dt
                     )
                     
-                    await enviar_mensagem(str(tenant.id), client.whatsapp, reply)
+                    await enviar_mensagem(
+                        str(tenant.id),
+                        client.whatsapp,
+                        reply,
+                        instance_name=get_evolution_instance_name(tenant.id, tenant),
+                    )
                     
                     log = LogMensagem(
                         id=uuid.uuid4(),

@@ -1,32 +1,37 @@
 import uuid
 import json
 import io
-from datetime import datetime, date, time
-from typing import List, Optional
+from datetime import datetime, date, time, timezone
+from typing import List, Literal, Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, text, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db
+from app.config import settings
 from app.models.models import (
     Usuario, Tenant, ClientePaciente, ServicoProduto, Preco,
     AtendimentoPedido, ItemAtendimento, ListaEspera, Aprovacao,
-    Configuracao, LogMensagem
+    Configuracao, LogMensagem, LogAuditoria
 )
-from app.dependencies import get_current_user, get_tenant_id
+from app.dependencies import get_current_user, get_tenant_id, require_roles
 from app.schemas.dashboard import (
     DashboardHojeResponse, AtendimentoPedidoResponse, AtendimentoPedidoCreate,
     ClientePacienteResponse, ClientePacienteCreate, ServicoProdutoResponse,
     ServicoProdutoCreate, PrecoResponse, PrecoCreate, ListaEsperaResponse,
     ListaEsperaCreate, ConfiguracaoResponse, ConfiguracaoUpdate,
-    AprovacaoResponse, AprovacaoProcessRequest, ROIResponse, ItemAtendimentoResponse
+    AprovacaoResponse, AprovacaoProcessRequest, ROIResponse, ItemAtendimentoResponse,
+    AtendimentoStatusUpdate
 )
 from app.services.pos_atendimento_service import agendar_pos_atendimento
 from app.services.aprovacao_service import processar_decisao_dono
 from app.services.pdf_service import gerar_pdf_fechamento_diario, gerar_pdf_roi_mensal
+from app.schemas.auth import OperatorCreate, OperatorResponse
+from app.utils.security import get_password_hash, validate_password_strength
 
 router = APIRouter(tags=["dashboard"])
 
@@ -205,17 +210,21 @@ async def get_dashboard_roi(
 
 @router.get("/clientes", response_model=List[ClientePacienteResponse])
 async def list_clientes(
-    search: Optional[str] = None,
-    status_reativacao: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    search: Optional[str] = Query(None, max_length=100),
+    status_reativacao: Optional[Literal["ativo", "inativo_3m", "inativo_6m", "inativo_12m", "reativado"]] = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0, le=1_000_000),
     current_user: Usuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     stmt = select(ClientePaciente)
     if search:
+        decrypted_name = func.pgp_sym_decrypt(
+            ClientePaciente.__table__.c.nome,
+            settings.data_encryption_key,
+        )
         stmt = stmt.where(
-            (ClientePaciente.nome.ilike(f"%{search}%")) | 
+            (decrypted_name.ilike(f"%{search}%")) |
             (ClientePaciente.whatsapp.like(f"%{search}%"))
         )
     if status_reativacao:
@@ -277,6 +286,15 @@ async def update_cliente(
     cliente = await db.get(ClientePaciente, id)
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente não encontrado.")
+
+    duplicate = (await db.execute(
+        select(ClientePaciente.id).where(
+            ClientePaciente.whatsapp == cliente_data.whatsapp,
+            ClientePaciente.id != id,
+        )
+    )).scalar_one_or_none()
+    if duplicate:
+        raise HTTPException(status_code=400, detail="Já existe um cliente cadastrado com este WhatsApp neste tenant.")
         
     cliente.nome = cliente_data.nome
     cliente.whatsapp = cliente_data.whatsapp
@@ -290,7 +308,7 @@ async def update_cliente(
 @router.delete("/clientes/{id}/lgpd", status_code=204)
 async def delete_cliente_lgpd(
     id: uuid.UUID,
-    current_user: Usuario = Depends(get_current_user),
+    current_user: Usuario = Depends(require_roles("dono")),
     db: AsyncSession = Depends(get_db)
 ):
     """LGPD compliant erasure of client data (Right to be Forgotten)"""
@@ -313,7 +331,7 @@ async def delete_cliente_lgpd(
 async def list_atendimentos(
     data_inicio: Optional[datetime] = None,
     data_fim: Optional[datetime] = None,
-    status: Optional[str] = None,
+    status: Optional[Literal["aguardando", "pendente_aprovacao", "confirmado", "em_producao", "pronto", "realizado", "entregue", "cancelado", "falta", "abandonado"]] = None,
     cliente_id: Optional[uuid.UUID] = None,
     current_user: Usuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
@@ -406,6 +424,14 @@ async def create_atendimento(
     if not client:
         raise HTTPException(status_code=404, detail="Cliente não encontrado.")
 
+    if appt_data.itens:
+        requested_service_ids = {item.servico_id for item in appt_data.itens}
+        existing_service_ids = set((await db.execute(
+            select(ServicoProduto.id).where(ServicoProduto.id.in_(requested_service_ids))
+        )).scalars().all())
+        if existing_service_ids != requested_service_ids:
+            raise HTTPException(status_code=404, detail="Um ou mais serviços/produtos não foram encontrados.")
+
     # Create appointment
     appt = AtendimentoPedido(
         id=uuid.uuid4(),
@@ -492,7 +518,7 @@ async def create_atendimento(
 @router.patch("/atendimentos/{id}/status", response_model=AtendimentoPedidoResponse)
 async def patch_atendimento_status(
     id: uuid.UUID,
-    status_update: dict, # expecting {"status": "...", "pago": bool, "compareceu": bool}
+    status_update: AtendimentoStatusUpdate,
     current_user: Usuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -501,23 +527,23 @@ async def patch_atendimento_status(
         raise HTTPException(status_code=404, detail="Atendimento/Pedido não encontrado.")
 
     old_status = appt.status
-    new_status = status_update.get("status")
+    new_status = status_update.status
     
     if new_status:
         appt.status = new_status
         if new_status in ["realizado", "entregue"]:
             appt.compareceu = True
             if new_status == "realizado":
-                appt.data_atendimento = datetime.utcnow()
+                appt.data_atendimento = datetime.now(timezone.utc)
             else:
-                appt.data_entrega = datetime.utcnow()
+                appt.data_entrega = datetime.now(timezone.utc)
         elif new_status == "falta":
             appt.compareceu = False
             
-    if "pago" in status_update:
-        appt.pago = status_update["pago"]
-    if "compareceu" in status_update:
-        appt.compareceu = status_update["compareceu"]
+    if "pago" in status_update.model_fields_set:
+        appt.pago = status_update.pago
+    if "compareceu" in status_update.model_fields_set:
+        appt.compareceu = status_update.compareceu
 
     await db.commit()
     await db.refresh(appt)
@@ -593,7 +619,7 @@ async def list_aprovacoes(
 async def processar_aprovacao(
     id: uuid.UUID,
     payload: AprovacaoProcessRequest,
-    current_user: Usuario = Depends(get_current_user),
+    current_user: Usuario = Depends(require_roles("dono")),
     db: AsyncSession = Depends(get_db)
 ):
     aprv = await db.get(Aprovacao, id)
@@ -820,6 +846,9 @@ async def add_lista_espera(
     if not client:
         raise HTTPException(status_code=404, detail="Cliente não encontrado.")
 
+    if payload.servico_id and not await db.get(ServicoProduto, payload.servico_id):
+        raise HTTPException(status_code=404, detail="Serviço/Produto não encontrado.")
+
     entry = ListaEspera(
         id=uuid.uuid4(),
         tenant_id=current_user.tenant_id,
@@ -881,6 +910,94 @@ async def delete_lista_espera(
     await db.commit()
     return None
 
+
+@router.get("/usuarios", response_model=List[OperatorResponse])
+async def list_usuarios(
+    current_user: Usuario = Depends(require_roles("dono")),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Usuario)
+        .where(Usuario.tenant_id == current_user.tenant_id, Usuario.ativo.is_(True))
+        .order_by(Usuario.nome.asc())
+    )
+    return result.scalars().all()
+
+
+@router.post("/usuarios", response_model=OperatorResponse, status_code=201)
+async def create_usuario(
+    payload: OperatorCreate,
+    current_user: Usuario = Depends(require_roles("dono")),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        validate_password_strength(payload.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    existing = (await db.execute(
+        select(Usuario.id).where(func.lower(Usuario.email) == str(payload.email).lower())
+    )).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=400, detail="E-mail já cadastrado.")
+
+    operator = Usuario(
+        id=uuid.uuid4(),
+        tenant_id=current_user.tenant_id,
+        nome=payload.nome,
+        email=str(payload.email).lower(),
+        senha_hash=get_password_hash(payload.password),
+        perfil=payload.perfil,
+        ativo=True,
+    )
+    db.add(operator)
+    db.add(LogAuditoria(
+        id=uuid.uuid4(),
+        tenant_id=current_user.tenant_id,
+        usuario_id=current_user.id,
+        usuario_email=current_user.email,
+        acao="USER_CREATE",
+        tabela="usuarios",
+        registro_id=operator.id,
+        valores_novos=json.dumps({"email": operator.email, "perfil": operator.perfil}),
+    ))
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="E-mail já cadastrado.") from exc
+    await db.refresh(operator)
+    return operator
+
+
+@router.delete("/usuarios/{id}", status_code=204)
+async def deactivate_usuario(
+    id: uuid.UUID,
+    current_user: Usuario = Depends(require_roles("dono")),
+    db: AsyncSession = Depends(get_db),
+):
+    operator = await db.get(Usuario, id)
+    if not operator or not operator.ativo:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+    if operator.id == current_user.id or operator.perfil == "dono":
+        raise HTTPException(status_code=400, detail="O usuário proprietário não pode ser desativado.")
+
+    operator.ativo = False
+    operator.token_version += 1
+    db.add(LogAuditoria(
+        id=uuid.uuid4(),
+        tenant_id=current_user.tenant_id,
+        usuario_id=current_user.id,
+        usuario_email=current_user.email,
+        acao="USER_DEACTIVATE",
+        tabela="usuarios",
+        registro_id=operator.id,
+        valores_antigos=json.dumps({"email": operator.email, "perfil": operator.perfil, "ativo": True}),
+        valores_novos=json.dumps({"ativo": False}),
+    ))
+    await db.commit()
+    return None
+
 @router.get("/configuracoes", response_model=ConfiguracaoResponse)
 async def get_configuracoes(
     current_user: Usuario = Depends(get_current_user),
@@ -907,13 +1024,19 @@ async def get_configuracoes(
         
     tenant = await db.get(Tenant, current_user.tenant_id)
     config.sistema_ativo = tenant.sistema_ativo if tenant else True
+    config.owner_whatsapp = tenant.owner_whatsapp if tenant else None
+    config.evolution_instance_name = tenant.evolution_instance_name if tenant else None
+    config.tenant_nome = tenant.nome if tenant else None
+    config.tenant_tipo = tenant.tipo if tenant else None
+    config.tenant_cor_primaria = tenant.cor_primaria if tenant else None
+    config.tenant_logo_url = tenant.logo_url if tenant else None
     return config
 
 
 @router.put("/configuracoes", response_model=ConfiguracaoResponse)
 async def update_configuracoes(
     payload: ConfiguracaoUpdate,
-    current_user: Usuario = Depends(get_current_user),
+    current_user: Usuario = Depends(require_roles("dono")),
     db: AsyncSession = Depends(get_db)
 ):
     config = (await db.execute(
@@ -956,13 +1079,23 @@ async def update_configuracoes(
                 raise HTTPException(
                     status_code=403,
                     detail="Apenas o proprietário (dono) pode alterar o estado do sistema (Kill Switch)."
-                )
+            )
             tenant.sistema_ativo = payload.sistema_ativo
+        if "owner_whatsapp" in payload.model_fields_set:
+            tenant.owner_whatsapp = payload.owner_whatsapp.strip() if payload.owner_whatsapp else None
+        if "evolution_instance_name" in payload.model_fields_set:
+            tenant.evolution_instance_name = payload.evolution_instance_name.strip() if payload.evolution_instance_name else None
         db.add(tenant)
         
     await db.commit()
     await db.refresh(config)
     config.sistema_ativo = tenant.sistema_ativo if tenant else True
+    config.owner_whatsapp = tenant.owner_whatsapp if tenant else None
+    config.evolution_instance_name = tenant.evolution_instance_name if tenant else None
+    config.tenant_nome = tenant.nome if tenant else None
+    config.tenant_tipo = tenant.tipo if tenant else None
+    config.tenant_cor_primaria = tenant.cor_primaria if tenant else None
+    config.tenant_logo_url = tenant.logo_url if tenant else None
     return config
 
 
@@ -1061,7 +1194,7 @@ async def download_pdf_dia(
 
 @router.get("/relatorios/pdf/mensal")
 async def download_pdf_mensal(
-    mes_ano: Optional[str] = Query(None, description="Format MM/YYYY"),
+    mes_ano: Optional[str] = Query(None, pattern=r"^(0[1-9]|1[0-2])/\d{4}$", description="Formato MM/AAAA"),
     current_user: Usuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -1069,38 +1202,57 @@ async def download_pdf_mensal(
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant não encontrado.")
 
-    mes_ano_str = mes_ano or datetime.today().strftime("%m/%Y")
+    now_sp = datetime.now(ZoneInfo("America/Sao_Paulo"))
+    mes_ano_str = mes_ano or now_sp.strftime("%m/%Y")
+    month, year = (int(part) for part in mes_ano_str.split("/"))
+    start_dt = datetime(year, month, 1, tzinfo=ZoneInfo("America/Sao_Paulo"))
+    if month == 12:
+        end_dt = datetime(year + 1, 1, 1, tzinfo=ZoneInfo("America/Sao_Paulo"))
+    else:
+        end_dt = datetime(year, month + 1, 1, tzinfo=ZoneInfo("America/Sao_Paulo"))
+    in_month = (
+        AtendimentoPedido.data_agendamento >= start_dt,
+        AtendimentoPedido.data_agendamento < end_dt,
+    )
     
     # Calculate stats
     realizados_count = (await db.execute(
-        select(func.count(AtendimentoPedido.id)).where(AtendimentoPedido.status.in_(["realizado", "entregue"]))
+        select(func.count(AtendimentoPedido.id)).where(*in_month, AtendimentoPedido.status.in_(["realizado", "entregue"]))
     )).scalar() or 0
     
     receita_total = float((await db.execute(
-        select(func.sum(AtendimentoPedido.total)).where(AtendimentoPedido.status.in_(["realizado", "entregue"]))
+        select(func.sum(AtendimentoPedido.total)).where(*in_month, AtendimentoPedido.status.in_(["realizado", "entregue"]))
     )).scalar() or 0.0)
 
     faltas_count = (await db.execute(
-        select(func.count(AtendimentoPedido.id)).where(AtendimentoPedido.status == "falta")
+        select(func.count(AtendimentoPedido.id)).where(*in_month, AtendimentoPedido.status == "falta")
     )).scalar() or 0
     
     total_comp_denom = realizados_count + faltas_count
     taxa_comparecimento = (realizados_count / total_comp_denom * 100) if total_comp_denom > 0 else 100.0
 
     receita_perdida_faltas = float((await db.execute(
-        select(func.sum(AtendimentoPedido.total)).where(AtendimentoPedido.status == "falta")
+        select(func.sum(AtendimentoPedido.total)).where(*in_month, AtendimentoPedido.status == "falta")
     )).scalar() or 0.0)
 
     reativados_crm = (await db.execute(
-        select(func.count(ClientePaciente.id)).where(ClientePaciente.status_reativacao == "reativado")
+        select(func.count(ClientePaciente.id)).where(
+            ClientePaciente.status_reativacao == "reativado",
+            ClientePaciente.reativado_em >= start_dt,
+            ClientePaciente.reativado_em < end_dt,
+        )
     )).scalar() or 0
 
     consultas_lista_espera = (await db.execute(
-        select(func.count(ListaEspera.id)).where(ListaEspera.status == "agendado")
+        select(func.count(ListaEspera.id)).where(
+            ListaEspera.status == "agendado",
+            ListaEspera.agendado_em >= start_dt,
+            ListaEspera.agendado_em < end_dt,
+        )
     )).scalar() or 0
 
     ticket_avg = float((await db.execute(
-        select(func.avg(AtendimentoPedido.total)).where(AtendimentoPedido.status.in_(["realizado", "entregue"]))
+        select(func.avg(AtendimentoPedido.total)).where(*in_month, AtendimentoPedido.status.in_(["realizado", "entregue"]))
     )).scalar() or 150.0)
 
     impacto_total = (reativados_crm * ticket_avg) + (consultas_lista_espera * ticket_avg)

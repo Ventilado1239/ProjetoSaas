@@ -1,21 +1,13 @@
 import React, { useState } from 'react';
-import { useStore } from '../store/useStore';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Cliente, Servico, ListaEspera as ListaEsperaType } from '../types';
 import api from '../services/api';
 import toast from '../services/toast';
-import { 
-  selectAddListaEspera, 
-  selectOferecerListaEspera, 
-  selectDeleteListaEspera 
-} from '../store/selectors';
-import { Plus, Send, Trash2, User, Clock, X } from 'lucide-react';
+import { EmptyState } from './EmptyState';
+import { Plus, Send, Trash2, User, Clock, X, ClipboardList } from 'lucide-react';
 
 export const ListaEspera: React.FC = () => {
   const queryClient = useQueryClient();
-  const addListaEsperaStore = useStore(selectAddListaEspera);
-  const oferecerListaEsperaStore = useStore(selectOferecerListaEspera);
-  const deleteListaEsperaStore = useStore(selectDeleteListaEspera);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState('');
@@ -46,13 +38,7 @@ export const ListaEspera: React.FC = () => {
   // Offerhorário Mutation
   const offerMutation = useMutation({
     mutationFn: (id: string) => api.post(`/lista-espera/${id}/oferecer`),
-    onSuccess: async (_, id) => {
-      // Sync legacy state
-      try {
-        await oferecerListaEsperaStore(id);
-      } catch {
-        // ignore
-      }
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['listaEspera'] });
       toast.success('Disparo de vaga enviado via WhatsApp!');
     },
@@ -64,13 +50,7 @@ export const ListaEspera: React.FC = () => {
   // Delete waiting list mutation
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/lista-espera/${id}`),
-    onSuccess: async (_, id) => {
-      // Sync legacy state
-      try {
-        await deleteListaEsperaStore(id);
-      } catch {
-        // ignore
-      }
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['listaEspera'] });
       toast.success('Registro removido com sucesso.');
     },
@@ -82,13 +62,7 @@ export const ListaEspera: React.FC = () => {
   // Add waiting list entry mutation
   const addMutation = useMutation({
     mutationFn: (payload: Record<string, unknown>) => api.post('/lista-espera', payload),
-    onSuccess: async (_, variables) => {
-      // Sync legacy state
-      try {
-        await addListaEsperaStore(variables);
-      } catch {
-        // ignore
-      }
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['listaEspera'] });
       toast.success('Cliente adicionado à fila de espera!');
       
@@ -236,11 +210,11 @@ export const ListaEspera: React.FC = () => {
             </div>
           ))
         ) : (
-          <div className="p-12 text-center text-text-secondary text-sm flex flex-col items-center">
-            <span className="text-3xl mb-2">📋</span>
-            <p className="font-semibold text-text-primary mb-0.5">Fila de espera vazia.</p>
-            <p className="text-xs text-text-secondary">Nenhum cliente na fila de espera para este serviço.</p>
-          </div>
+          <EmptyState
+            icon={ClipboardList}
+            title="Fila de espera vazia."
+            description="Nenhum cliente está aguardando uma vaga ou desistência agora."
+          />
         )}
       </div>
 

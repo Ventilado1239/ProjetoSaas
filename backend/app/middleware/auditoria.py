@@ -1,5 +1,6 @@
 import json
 import uuid
+from decimal import Decimal
 from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 from app.models.models import ClientePaciente, AtendimentoPedido, LogAuditoria
@@ -17,21 +18,32 @@ def set_tenant_on_begin(session, transaction, connection):
         connection.execute(text("SELECT set_tenant_id(NULL)"))
 
 
+CLIENT_PII_FIELDS = {"nome", "whatsapp", "data_nascimento", "convenio"}
+
+
+def serialize_value(value):
+    if value is None:
+        return None
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, Decimal):
+        return str(value)
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if isinstance(value, (int, float, bool, str)):
+        return value
+    return str(value)
+
+
 def serialize_row(obj):
     """Serialize database model columns to a dictionary of primitive types."""
     res = {}
     for col in obj.__table__.columns:
         val = getattr(obj, col.name)
-        if val is None:
-            res[col.name] = None
-        elif isinstance(val, uuid.UUID):
-            res[col.name] = str(val)
-        elif hasattr(val, "isoformat"):
-            res[col.name] = val.isoformat()
-        elif isinstance(val, (int, float, bool, str)):
-            res[col.name] = val
+        if isinstance(obj, ClientePaciente) and col.name in CLIENT_PII_FIELDS and val is not None:
+            res[col.name] = "[REDACTED]"
         else:
-            res[col.name] = str(val)
+            res[col.name] = serialize_value(val)
     return res
 
 def get_changes(obj):
@@ -46,17 +58,12 @@ def get_changes(obj):
             old_val = hist.deleted[0] if hist.deleted else None
             new_val = hist.added[0] if hist.added else getattr(obj, attr.key)
             
-            # Serialize old value
-            if isinstance(old_val, uuid.UUID):
-                old_val = str(old_val)
-            elif hasattr(old_val, "isoformat"):
-                old_val = old_val.isoformat()
-                
-            # Serialize new value
-            if isinstance(new_val, uuid.UUID):
-                new_val = str(new_val)
-            elif hasattr(new_val, "isoformat"):
-                new_val = new_val.isoformat()
+            if isinstance(obj, ClientePaciente) and attr.key in CLIENT_PII_FIELDS:
+                old_val = "[REDACTED]" if old_val is not None else None
+                new_val = "[REDACTED]" if new_val is not None else None
+            else:
+                old_val = serialize_value(old_val)
+                new_val = serialize_value(new_val)
                 
             old_vals[attr.key] = old_val
             new_vals[attr.key] = new_val

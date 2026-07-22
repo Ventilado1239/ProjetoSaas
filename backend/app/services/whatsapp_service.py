@@ -3,6 +3,7 @@ import random
 import logging
 from typing import List, Dict, Any, Optional
 import httpx
+from urllib.parse import quote
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,17 @@ def clear_sent_messages():
     global SENT_MESSAGES
     SENT_MESSAGES.clear()
 
-async def enviar_mensagem(tenant_id: str, numero: str, mensagem: str) -> bool:
+
+async def close_http_client() -> None:
+    await http_client.aclose()
+
+async def enviar_mensagem(
+    tenant_id: str,
+    numero: str,
+    mensagem: str,
+    simular_delay: bool = True,
+    instance_name: Optional[str] = None,
+) -> bool:
     """
     Sends a message to a WhatsApp number with human behavior simulation:
     - Triggers composing/typing presence.
@@ -31,34 +42,37 @@ async def enviar_mensagem(tenant_id: str, numero: str, mensagem: str) -> bool:
     # Sanitize number to remove non-numeric chars (expecting format like 5511999999999)
     number_clean = "".join(filter(str.isdigit, numero))
     if not number_clean:
-        logger.error(f"Número inválido para envio: {numero}")
+        logger.error("Numero invalido para envio no tenant %s", tenant_id)
         return False
 
-    instance_name = f"saas_tenant_{tenant_id}"
+    instance_name = instance_name or f"saas_tenant_{tenant_id}"
     
     # 1. Comportamento Humano: Typing delay
-    delay = random.randint(3, 8) if SIMULATE_DELAY else 0
-    logger.info(f"Simulando digitação para {number_clean} (delay de {delay}s)...")
+    delay = random.randint(3, 8) if SIMULATE_DELAY and simular_delay else 0
+    logger.info("Preparando envio no tenant %s (delay de %ss)", tenant_id, delay)
 
     # Record message locally for testing inspection
-    SENT_MESSAGES.append({
-        "tenant_id": tenant_id,
-        "numero": number_clean,
-        "mensagem": mensagem,
-        "delay": delay
-    })
+    if settings.ENVIRONMENT != "production":
+        SENT_MESSAGES.append({
+            "tenant_id": tenant_id,
+            "numero": number_clean,
+            "mensagem": mensagem,
+            "delay": delay
+        })
+        if len(SENT_MESSAGES) > 1000:
+            del SENT_MESSAGES[:-1000]
 
     # If API is not configured, run in mock mode
     if not settings.EVOLUTION_API_URL or not settings.EVOLUTION_API_KEY:
-        logger.info(f"[MOCK WHATSAPP] Enviado para {number_clean} no tenant {tenant_id}: {mensagem}")
-        if delay > 0:
-            await asyncio.sleep(delay)
+        logger.info("[MOCK WHATSAPP] Mensagem simulada para tenant %s", tenant_id)
         return True
+
+    safe_instance_name = quote(instance_name, safe="")
 
     # 2. Trigger typing presence on Evolution API (graceful fallback if it fails)
     if delay > 0:
         try:
-            presence_url = f"{settings.EVOLUTION_API_URL.rstrip('/')}/chat/sendPresence/{instance_name}"
+            presence_url = f"{settings.EVOLUTION_API_URL.rstrip('/')}/chat/sendPresence/{safe_instance_name}"
             headers = {
                 "apikey": settings.EVOLUTION_API_KEY,
                 "Content-Type": "application/json"
@@ -69,7 +83,8 @@ async def enviar_mensagem(tenant_id: str, numero: str, mensagem: str) -> bool:
                 "delay": delay * 1000
             }
             
-            await http_client.post(presence_url, headers=headers, json=presence_data, timeout=5.0)
+            presence_response = await http_client.post(presence_url, headers=headers, json=presence_data, timeout=5.0)
+            presence_response.raise_for_status()
         except Exception as e:
             logger.warning(f"Erro ao disparar presença no WhatsApp: {e}")
 
@@ -78,7 +93,7 @@ async def enviar_mensagem(tenant_id: str, numero: str, mensagem: str) -> bool:
 
     # 3. Send text message
     try:
-        send_url = f"{settings.EVOLUTION_API_URL.rstrip('/')}/message/sendText/{instance_name}"
+        send_url = f"{settings.EVOLUTION_API_URL.rstrip('/')}/message/sendText/{safe_instance_name}"
         headers = {
             "apikey": settings.EVOLUTION_API_KEY,
             "Content-Type": "application/json"
@@ -90,9 +105,10 @@ async def enviar_mensagem(tenant_id: str, numero: str, mensagem: str) -> bool:
             "linkPreview": True
         }
         
-        await http_client.post(send_url, headers=headers, json=send_data, timeout=10.0)
+        response = await http_client.post(send_url, headers=headers, json=send_data, timeout=10.0)
+        response.raise_for_status()
             
-        logger.info(f"Mensagem enviada com sucesso para {number_clean} no tenant {tenant_id}")
+        logger.info("Mensagem enviada com sucesso no tenant %s para final %s", tenant_id, number_clean[-4:])
         return True
     except Exception as e:
         logger.error(f"Erro ao enviar mensagem via Evolution API: {e}")

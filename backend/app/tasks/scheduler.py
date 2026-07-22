@@ -74,7 +74,7 @@ def start_scheduler():
             processar_backups,
             CronTrigger(hour="23", minute="0"),
             id="backup_diario",
-            name="Backup diário de dados para o Google Drive",
+            name="Backup diario criptografado em volume persistente",
             replace_existing=True
         )
 
@@ -96,6 +96,16 @@ def start_scheduler():
             id="abandono_conversas",
             name="Detecção de conversas abandonadas",
             replace_existing=True
+        )
+
+        # 9. Remove expired security records and old webhook deduplication IDs.
+        from app.tasks.security_cleanup_task import cleanup_security_records
+        scheduler.add_job(
+            cleanup_security_records,
+            CronTrigger(hour="3", minute="30"),
+            id="security_cleanup",
+            name="Limpeza de registros de seguranca expirados",
+            replace_existing=True,
         )
 
         scheduler.start()

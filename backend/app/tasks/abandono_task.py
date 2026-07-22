@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 from app.models.models import Tenant, EstadoConversa, ClientePaciente, LogMensagem
+from app.services.tenant_settings import get_evolution_instance_name
 from app.services.whatsapp_service import enviar_mensagem
 
 logger = logging.getLogger(__name__)
@@ -82,7 +83,12 @@ async def _run_abandonos(db: AsyncSession):
                     f"Se preferir, digite 'cancelar' para encerrar. 😊"
                 )
 
-                await enviar_mensagem(str(tenant.id), client.whatsapp, nudge_msg)
+                await enviar_mensagem(
+                    str(tenant.id),
+                    client.whatsapp,
+                    nudge_msg,
+                    instance_name=get_evolution_instance_name(tenant.id, tenant),
+                )
 
                 log = LogMensagem(
                     id=uuid.uuid4(),

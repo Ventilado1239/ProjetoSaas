@@ -1,0 +1,90 @@
+name: Security and release gates
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: projeto_saas_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d projeto_saas_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://saas_app_user:saas_app_password@localhost:5432/projeto_saas_test
+      TEST_SUPERUSER_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/projeto_saas_test
+      DATABASE_APP_ROLE: saas_app_user
+      SUPABASE_URL: https://example.supabase.co
+      SUPABASE_ANON_KEY: test-anon
+      SUPABASE_SERVICE_ROLE_KEY: test-service
+      JWT_SECRET: ci-jwt-secret-with-at-least-32-characters
+      DATA_ENCRYPTION_KEY: ci-data-key-with-at-least-32-characters
+      ENVIRONMENT: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements-dev.txt
+      - name: Create restricted database role
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d projeto_saas_test -c "CREATE ROLE saas_app_user LOGIN PASSWORD 'saas_app_password'"
+      - name: Migrate a clean database
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/projeto_saas_test
+        run: alembic upgrade head
+      - name: Test
+        working-directory: backend
+        run: pytest -q
+      - name: Audit Python dependencies
+        working-directory: backend
+        run: pip-audit -r requirements.txt
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npm run lint
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build -t projeto-saas:ci backend
+      - name: Verify non-root runtime
+        run: test "$(docker image inspect projeto-saas:ci --format '{{.Config.User}}')" = "appuser"

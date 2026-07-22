@@ -12,12 +12,12 @@ from app.models.models import (
     ItemAtendimento, ServicoProduto, LogMensagem, EstadoConversa
 )
 from app.services.pdf_service import gerar_pdf_fechamento_diario
+from app.services.tenant_settings import get_evolution_instance_name, get_owner_whatsapp
 from app.services.whatsapp_service import enviar_mensagem
 
 logger = logging.getLogger(__name__)
 
 SP_TZ = ZoneInfo("America/Sao_Paulo")
-DEFAULT_OWNER_PHONE = "5511999999999"
 MAX_RETRIES = 3
 RETRY_INTERVAL_MINUTES = 10
 
@@ -162,7 +162,7 @@ async def _gerar_e_enviar_pdf(
     logger.info(f"PDF de fechamento gerado para {tenant.nome}: {len(pdf_bytes)} bytes")
 
     # Send notification to owner via WhatsApp
-    owner_phone = DEFAULT_OWNER_PHONE
+    owner_phone = get_owner_whatsapp(tenant)
     summary_msg = (
         f"📊 *RELATÓRIO DE FECHAMENTO — {today.strftime('%d/%m/%Y')}*\n\n"
         f"📈 Atendimentos: {total}\n"
@@ -174,7 +174,12 @@ async def _gerar_e_enviar_pdf(
         f"O PDF completo foi gerado e salvo com sucesso."
     )
 
-    await enviar_mensagem(str(tenant.id), owner_phone, summary_msg)
+    await enviar_mensagem(
+        str(tenant.id),
+        owner_phone,
+        summary_msg,
+        instance_name=get_evolution_instance_name(tenant.id, tenant),
+    )
 
     log = LogMensagem(
         id=uuid.uuid4(),

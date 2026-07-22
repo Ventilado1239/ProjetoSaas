@@ -11,12 +11,12 @@ from app.models.models import (
     Tenant, AtendimentoPedido, ClientePaciente, ListaEspera, LogMensagem
 )
 from app.services.pdf_service import gerar_pdf_roi_mensal
+from app.services.tenant_settings import get_evolution_instance_name, get_owner_whatsapp
 from app.services.whatsapp_service import enviar_mensagem
 
 logger = logging.getLogger(__name__)
 
 SP_TZ = ZoneInfo("America/Sao_Paulo")
-DEFAULT_OWNER_PHONE = "5511999999999"
 
 # Plan pricing for ROI calculation
 PLAN_PRICING = {
@@ -106,6 +106,8 @@ async def _gerar_roi_tenant(
         .where(
             ClientePaciente.tenant_id == tenant.id,
             ClientePaciente.status_reativacao == "reativado",
+            ClientePaciente.reativado_em >= start_dt,
+            ClientePaciente.reativado_em <= end_dt,
         )
     )
     res_reativados = await db.execute(stmt_reativados)
@@ -118,6 +120,8 @@ async def _gerar_roi_tenant(
         .where(
             ListaEspera.tenant_id == tenant.id,
             ListaEspera.status == "agendado",
+            ListaEspera.agendado_em >= start_dt,
+            ListaEspera.agendado_em <= end_dt,
         )
     )
     res_lista = await db.execute(stmt_lista)
@@ -155,7 +159,7 @@ async def _gerar_roi_tenant(
     logger.info(f"PDF de ROI gerado para {tenant.nome}: {len(pdf_bytes)} bytes, ROI={roi:.1f}x")
 
     # Send WhatsApp summary to owner
-    owner_phone = DEFAULT_OWNER_PHONE
+    owner_phone = get_owner_whatsapp(tenant)
     msg = (
         f"📈 *RELATÓRIO MENSAL DE ROI — {mes_ano}*\n\n"
         f"🏢 {tenant.nome}\n\n"
@@ -168,7 +172,12 @@ async def _gerar_roi_tenant(
         f"📊 *ROI: {roi:.1f}x sobre a mensalidade*"
     )
 
-    await enviar_mensagem(str(tenant.id), owner_phone, msg)
+    await enviar_mensagem(
+        str(tenant.id),
+        owner_phone,
+        msg,
+        instance_name=get_evolution_instance_name(tenant.id, tenant),
+    )
 
     log = LogMensagem(
         id=uuid.uuid4(),

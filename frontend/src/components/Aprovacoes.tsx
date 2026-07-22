@@ -1,15 +1,17 @@
 import React, { useEffect, useState } from 'react';
-import { useStore } from '../store/useStore';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import toast from '../services/toast';
+import { EmptyState } from './EmptyState';
+import { useStore } from '../store/useStore';
+import { selectTenant } from '../store/selectors';
 import type { Aprovacao } from '../types';
-import { selectProcessarAprovacao } from '../store/selectors';
-import { Check, X, AlertOctagon, Clock, User, Phone } from 'lucide-react';
+import { Check, X, AlertOctagon, Clock, User, Phone, BadgeCheck } from 'lucide-react';
 
 export const Aprovacoes: React.FC = () => {
   const queryClient = useQueryClient();
-  const processarAprovacaoStore = useStore(selectProcessarAprovacao) as (id: string, aprovado: boolean) => Promise<void>;
+  const tenant = useStore(selectTenant);
+  const isClinic = tenant.tipo === 'clinica';
 
   const [timeState, setTimeState] = useState(new Date());
 
@@ -25,10 +27,16 @@ export const Aprovacoes: React.FC = () => {
     mutationFn: ({ id, aprovado }: { id: string; aprovado: boolean }) => 
       api.post(`/atendimentos/aprovacoes/${id}/processar`, { aprovado }),
     onSuccess: (_, variables) => {
-      void processarAprovacaoStore(variables.id, variables.aprovado);
+      queryClient.setQueryData<Aprovacao[]>(['aprovacoes'], (current = []) =>
+        current.filter((aprovacao) => aprovacao.id !== variables.id)
+      );
       queryClient.invalidateQueries({ queryKey: ['aprovacoes'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-      toast.success(variables.aprovado ? 'Pedido aprovado com sucesso!' : 'Pedido recusado.');
+      toast.success(
+        variables.aprovado
+          ? isClinic ? 'Solicitação aprovada com sucesso!' : 'Pedido aprovado com sucesso!'
+          : isClinic ? 'Solicitação recusada.' : 'Pedido recusado.'
+      );
     },
     onError: () => {
       toast.error('Erro ao processar. Tente novamente.');
@@ -76,7 +84,9 @@ export const Aprovacoes: React.FC = () => {
         <div>
           <h2 className="text-xl font-bold text-text-primary">Aprovações Operacionais</h2>
           <p className="text-xs text-text-secondary">
-            Pedidos que excedem limites automáticos ou necessitam de liberação do administrador
+            {isClinic
+              ? 'Solicitações que excedem limites automáticos ou precisam de liberação administrativa'
+              : 'Pedidos que excedem limites automáticos ou necessitam de liberação do administrador'}
           </p>
         </div>
         {isLoading && (
@@ -95,21 +105,25 @@ export const Aprovacoes: React.FC = () => {
             const isUrgent = minutes >= 120; // 2 hours waiting time
             const details = getDetailsObject(aprv.detalhes);
             const total = aprv.atendimento_total || details.total || 0;
-            const productName = details.produto_nome || 'Produto/Serviço';
+            const productName = details.produto_nome || (isClinic ? 'Procedimento/Consulta' : 'Produto/Serviço');
             const qty = details.quantidade || 1;
+            const pendingLabel = isClinic ? 'Solicitação Pendente' : 'Pedido Grande Pendente';
+            const itemLabel = isClinic ? 'Procedimento:' : 'Produto:';
+            const quantityLabel = isClinic ? 'Sessões/itens:' : 'Quantidade:';
+            const quantitySuffix = isClinic ? 'un.' : 'unidades';
 
             return (
               <div 
                 key={aprv.id} 
                 className="bg-surface border-y border-r border-warning/15 rounded-r-large p-6 shadow-xs flex flex-col justify-between border-l-[3.5px] border-l-warning"
-                style={{ backgroundColor: 'hsla(var(--color-warning) / 0.04)' }}
+                style={{ backgroundColor: 'hsla(var(--app-color-warning) / 0.04)' }}
               >
                 <div>
                   {/* Card Header with warning type and timer */}
                   <div className="flex items-center justify-between mb-4 border-b border-border/50 pb-3 gap-2">
                     <span className="flex items-center gap-1.5 text-xs font-semibold text-warning">
                       <AlertOctagon size={16} />
-                      Pedido Grande Pendente
+                      {pendingLabel}
                     </span>
                     <div className="flex items-center gap-2">
                       {isUrgent && (
@@ -142,12 +156,12 @@ export const Aprovacoes: React.FC = () => {
                     {/* Order details */}
                     <div className="p-3 bg-surface border border-border rounded-medium space-y-1">
                       <div className="flex justify-between text-xs">
-                        <span className="text-text-secondary">Produto:</span>
+                        <span className="text-text-secondary">{itemLabel}</span>
                         <strong className="text-text-primary">{productName}</strong>
                       </div>
                       <div className="flex justify-between text-xs">
-                        <span className="text-text-secondary">Quantidade:</span>
-                        <strong className="text-text-primary">{qty} unidades</strong>
+                        <span className="text-text-secondary">{quantityLabel}</span>
+                        <strong className="text-text-primary">{qty} {quantitySuffix}</strong>
                       </div>
                       <div className="flex justify-between text-xs border-t border-border pt-1.5 mt-1.5">
                         <span className="text-text-secondary font-medium">Valor Estimado:</span>
@@ -190,10 +204,14 @@ export const Aprovacoes: React.FC = () => {
           })}
         </div>
       ) : (
-        <div className="bg-surface border border-border rounded-large p-12 text-center shadow-xs max-w-lg mx-auto flex flex-col items-center">
-          <span className="text-4xl mb-4">🎉</span>
-          <h3 className="text-sm font-semibold text-text-primary mb-1">Tudo em dia!</h3>
-          <p className="text-xs text-text-secondary">Nenhuma aprovação de pedido grande pendente neste momento.</p>
+        <div className="bg-surface border border-border rounded-large shadow-xs max-w-lg mx-auto">
+          <EmptyState
+            icon={BadgeCheck}
+            title="Tudo em dia!"
+            description={isClinic
+              ? 'Nenhuma solicitação pendente de aprovação neste momento.'
+              : 'Nenhuma aprovação de pedido grande pendente neste momento.'}
+          />
         </div>
       )}
 

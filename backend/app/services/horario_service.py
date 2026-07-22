@@ -6,6 +6,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import Tenant, LogMensagem, EstadoConversa, ClientePaciente
+from app.services.tenant_settings import get_evolution_instance_name, get_owner_whatsapp
 from app.services.whatsapp_service import enviar_mensagem
 
 logger = logging.getLogger(__name__)
@@ -110,7 +111,8 @@ async def retomar_conversas_abertura(db: AsyncSession, tenant: Tenant):
         return
 
     # Notify owner about overnight messages
-    owner_phone = "5511999999999"
+    owner_phone = get_owner_whatsapp(tenant)
+    instance_name = get_evolution_instance_name(tenant.id, tenant)
     nocturnal_count = len(results)
     owner_msg = (
         f"🌅 *BOM DIA!* Você recebeu {nocturnal_count} mensagem(ns) fora do horário.\n\n"
@@ -124,7 +126,7 @@ async def retomar_conversas_abertura(db: AsyncSession, tenant: Tenant):
 
     if client_lines:
         owner_msg += "\n".join(client_lines)
-        await enviar_mensagem(str(tenant.id), owner_phone, owner_msg)
+        await enviar_mensagem(str(tenant.id), owner_phone, owner_msg, instance_name=instance_name)
 
         log = LogMensagem(
             id=uuid.uuid4(),
@@ -147,7 +149,7 @@ async def retomar_conversas_abertura(db: AsyncSession, tenant: Tenant):
             f"Olá, {client.nome}! Bom dia! 🌞 Acabamos de abrir e vimos sua mensagem. "
             f"Como posso te ajudar?"
         )
-        await enviar_mensagem(str(tenant.id), client.whatsapp, resume_msg)
+        await enviar_mensagem(str(tenant.id), client.whatsapp, resume_msg, instance_name=instance_name)
 
         log_client = LogMensagem(
             id=uuid.uuid4(),

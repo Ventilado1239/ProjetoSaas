@@ -1,21 +1,27 @@
 import logging
 import uuid
+import hmac
+import json
 from typing import Optional
 from zoneinfo import ZoneInfo
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, BackgroundTasks, Request, status
+from fastapi import APIRouter, Depends, BackgroundTasks, Header, HTTPException, Request, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.database import get_db, AsyncSessionLocal
-from app.models.models import Tenant, LogMensagem
+from app.config import settings
+from app.models.models import Tenant, LogMensagem, WebhookEvent
 from app.services import fluxo_service
+from app.services.tenant_settings import get_evolution_instance_name
 from app.services.whatsapp_service import enviar_mensagem
 from app.utils.mensagens import get_message
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
+MAX_WEBHOOK_BYTES = 1_000_000
 
 def is_outside_working_hours(tenant: Tenant) -> bool:
     """Checks if the current Brasilia time is outside the tenant's configured working hours."""
@@ -57,7 +63,12 @@ async def processar_webhook_async(
             if not tenant.sistema_ativo:
                 logger.warning(f"Tenant {tenant.nome} inativo. Enviando mensagem de indisponibilidade.")
                 reply = "Serviço temporariamente indisponível."
-                await enviar_mensagem(str(tenant.id), client_phone, reply)
+                await enviar_mensagem(
+                    str(tenant.id),
+                    client_phone,
+                    reply,
+                    instance_name=get_evolution_instance_name(tenant.id, tenant),
+                )
                 return
 
             # 4. Check working hours (Fluxo 7)
@@ -81,7 +92,12 @@ async def processar_webhook_async(
                     horario_fechamento=tenant.horario_fechamento
                 )
                 
-                await enviar_mensagem(str(tenant.id), client_phone, reply)
+                await enviar_mensagem(
+                    str(tenant.id),
+                    client_phone,
+                    reply,
+                    instance_name=get_evolution_instance_name(tenant.id, tenant),
+                )
                 
                 # Log outgoing message
                 log_out = LogMensagem(
@@ -128,16 +144,29 @@ async def processar_webhook_async(
 async def receive_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
-    tenant_id: Optional[uuid.UUID] = None
+    webhook_secret: Optional[str] = None,
+    x_webhook_secret: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Webhook endpoint to receive incoming WhatsApp messages from Evolution API.
     Guarantees fast response (< 500ms) by processing business logic in a background task.
     """
+    expected_secret = settings.EVOLUTION_WEBHOOK_SECRET
+    if expected_secret:
+        supplied_secret = x_webhook_secret or webhook_secret
+        if not supplied_secret or not hmac.compare_digest(supplied_secret, expected_secret):
+            raise HTTPException(status_code=401, detail="Webhook nao autorizado")
+
     try:
-        payload = await request.json()
-    except Exception:
-        return {"status": "error", "message": "Payload JSON inválido"}
+        raw_body = await request.body()
+        if len(raw_body) > MAX_WEBHOOK_BYTES:
+            raise HTTPException(status_code=413, detail="Payload muito grande")
+        payload = json.loads(raw_body)
+    except HTTPException:
+        raise
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="Payload JSON invalido")
 
     data = payload.get("data", {})
     key = data.get("key", {})
@@ -153,8 +182,10 @@ async def receive_webhook(
         # Ignore group messages and empty JIDs
         return {"status": "ignored", "reason": "group_or_empty_jid"}
 
-    client_phone = remote_jid.split("@")[0]
-    push_name = data.get("pushName") or "Cliente"
+    client_phone = "".join(char for char in remote_jid.split("@")[0] if char.isdigit())[:15]
+    if not 10 <= len(client_phone) <= 15:
+        return {"status": "ignored", "reason": "invalid_sender"}
+    push_name = str(data.get("pushName") or "Cliente")[:255]
 
     # Extract message content
     message_obj = data.get("message", {})
@@ -186,19 +217,43 @@ async def receive_webhook(
         else:
             message_type = "media"
 
-    # 3. Resolve tenant_id (Query Param -> parse from Instance Name -> return)
-    if not tenant_id:
-        instance_name = payload.get("instance", "")
-        if instance_name.startswith("saas_tenant_"):
-            try:
-                tenant_uuid_str = instance_name.replace("saas_tenant_", "")
-                tenant_id = uuid.UUID(tenant_uuid_str)
-            except ValueError:
-                pass
+    message_text = str(message_text)[:4000]
+
+    # 3. Resolve tenant strictly from the authenticated Evolution instance.
+    tenant_id = None
+    instance_name = str(payload.get("instance", ""))[:120]
+    if instance_name.startswith("saas_tenant_"):
+        try:
+            tenant_id = uuid.UUID(instance_name.removeprefix("saas_tenant_"))
+        except ValueError:
+            pass
+
+    if not tenant_id and instance_name:
+        await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        tenant = (await db.execute(
+            select(Tenant).where(Tenant.evolution_instance_name == instance_name)
+        )).scalar_one_or_none()
+        await db.execute(text("SET LOCAL app.bypass_rls = 'false'"))
+        if tenant:
+            tenant_id = tenant.id
 
     if not tenant_id:
         logger.warning("Mensagem ignorada: Não foi possível determinar o tenant_id.")
         return {"status": "ignored", "reason": "tenant_not_resolved"}
+
+    raw_message_id = str(key.get("id", ""))
+    if not raw_message_id:
+        return {"status": "ignored", "reason": "missing_message_id"}
+    message_id = f"{instance_name}:{raw_message_id}"[:255]
+    inserted_event_id = await db.scalar(
+        pg_insert(WebhookEvent)
+        .values(id=uuid.uuid4(), provider="evolution", event_id=message_id, tenant_id=tenant_id)
+        .on_conflict_do_nothing(constraint="uq_webhook_provider_event")
+        .returning(WebhookEvent.id)
+    )
+    if not inserted_event_id:
+        return {"status": "duplicate", "event_id": message_id}
+    await db.commit()
 
     # 4. Dispatch async processing
     background_tasks.add_task(

@@ -2,10 +2,13 @@ import io
 import csv
 import logging
 import uuid
+import base64
+import hashlib
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from cryptography.fernet import Fernet
 
 from app.models.models import (
     Tenant, ClientePaciente, AtendimentoPedido,
@@ -15,6 +18,18 @@ from app.models.models import (
 logger = logging.getLogger(__name__)
 
 SP_TZ = ZoneInfo("America/Sao_Paulo")
+
+
+def encrypt_backup_content(content: bytes, encryption_key: str) -> bytes:
+    """Encrypt backup bytes with an authenticated key derived from configuration."""
+    key = base64.urlsafe_b64encode(hashlib.sha256(encryption_key.encode("utf-8")).digest())
+    return Fernet(key).encrypt(content)
+
+
+def decrypt_backup_content(content: bytes, encryption_key: str) -> bytes:
+    """Decrypt and authenticate backup bytes for controlled restore workflows."""
+    key = base64.urlsafe_b64encode(hashlib.sha256(encryption_key.encode("utf-8")).digest())
+    return Fernet(key).decrypt(content)
 
 
 async def gerar_backup_csv(db: AsyncSession, tenant: Tenant) -> dict:

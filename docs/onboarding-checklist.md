@@ -8,31 +8,46 @@ Este guia orienta o administrador na configuração passo a passo para colocar u
 
 ### Backend (Railway)
 Certifique-se de configurar as seguintes variáveis no painel do Railway do novo Tenant:
-- `DATABASE_URL`: URI de conexão segura PostgreSQL (Supabase).
-- `JWT_SECRET`: Chave secreta de criptografia para tokens JWT e criptografia `pgcrypto`.
+- `DATABASE_URL`: URI de conexão segura PostgreSQL (Supabase), usando um papel sem privilégios administrativos.
+- `MIGRATION_DATABASE_URL`: URI administrativa usada somente no início do deploy para `alembic upgrade head`; o entrypoint a remove antes de iniciar a API.
+- `DATABASE_APP_ROLE`: papel usado pela aplicação (por exemplo, `saas_app_user`). Nunca use `postgres` no runtime.
+- `JWT_SECRET`: chave aleatória exclusiva para assinatura dos tokens JWT (mínimo de 32 caracteres).
+- `DATA_ENCRYPTION_KEY`: chave aleatória separada para criptografia de PII (mínimo de 32 caracteres e diferente de `JWT_SECRET`).
 - `JWT_ALGORITHM`: Algoritmo JWT (geralmente `HS256`).
 - `ENVIRONMENT`: `production` para habilitar HSTS, HTTPS obrigatório e ocultar stack traces.
+- `CORS_ORIGINS`: somente os domínios HTTPS reais do frontend, separados por vírgula.
+- `ALLOWED_HOSTS`: hosts públicos exatos da API, separados por vírgula. No Railway, inclua também `healthcheck.railway.app`.
 - `EVOLUTION_API_URL`: URL base do servidor Evolution API (ex: `https://evo.meuservico.com`).
 - `EVOLUTION_API_KEY`: API Key mestre para autenticação na Evolution API.
-- `ASAAS_API_URL`: URL do gateway Asaas (`https://www.asaas.com/api/v3` em produção ou `https://sandbox.asaas.com/api/v3` para testes).
-- `ASAAS_API_KEY`: Chave de API gerada no painel do Asaas do Tenant.
-- `ASAAS_WEBHOOK_SECRET`: Token gerado na configuração do webhook de cobranças do Asaas.
+- `EVOLUTION_WEBHOOK_SECRET`: segredo aleatório enviado no header `X-Webhook-Secret` ou no parâmetro `webhook_secret` da URL configurada na Evolution.
+- `ASAAS_API_URL`: `https://api.asaas.com/v3` em produção ou `https://api-sandbox.asaas.com/v3` em homologação.
+- `ASAAS_API_KEY`: chave da conta Asaas usada pelo SaaS para criar clientes e assinaturas.
+- `ASAAS_BILLING_ENABLED`: mantenha `false` até o Sandbox passar; use `true` para habilitar a criação automática.
+- `ASAAS_WEBHOOK_SECRET`: token exclusivo do webhook, com no mínimo 32 caracteres e diferente da API key.
+- `BACKUP_DIR`: caminho absoluto de um volume persistente, fora do repositório.
+- `BACKUP_ENCRYPTION_KEY`: chave exclusiva para criptografia autenticada dos backups.
+
+Em produção, a aplicação recusa iniciar quando uma dessas proteções obrigatórias está ausente ou insegura.
 
 ### Frontend (Vercel)
-As variáveis necessárias para compilar o app mobile-first na Vercel:
+Variável necessária para compilar o app mobile-first na Vercel:
 - `VITE_API_URL`: URL de produção do backend hospedado no Railway (ex: `https://backend-production.up.railway.app`).
-- `VITE_TENANT_ID`: UUID do Tenant criado no banco de dados.
-- `VITE_TENANT_NOME`: Nome da Marca/Clínica/Loja a ser renderizado na dashboard.
-- `VITE_TENANT_TIPO`: Tipo do Tenant (`clinica` ou `loja`).
-- `VITE_TENANT_COR_PRIMARIA`: Cor hexadecimal customizada do Tenant para personalização visual (ex: `#db2777` para rosa escuro, `#2563eb` para azul).
+
+Nome, tipo, logo e cor do tenant são obtidos pela API depois do login; não coloque identificadores de tenant no bundle público.
+
+### Webhooks
+
+- Evolution API: configure a URL como `https://api.seudominio.com/whatsapp/webhook?webhook_secret=SEU_SEGREDO` caso o seu proxy não consiga adicionar `X-Webhook-Secret`.
+- Asaas: configure `https://api.seudominio.com/webhooks/asaas` e use exatamente o token de `ASAAS_WEBHOOK_SECRET` no header `asaas-access-token`.
+- Nunca coloque `tenant_id` manualmente na URL do webhook. O tenant é resolvido pela instância autenticada.
 
 ---
 
 ## 2. Provisionamento no Banco de Dados (Supabase)
 
-Execute o seguinte script no SQL Editor do Supabase para registrar o novo Tenant e o primeiro usuário com perfil `dono`:
+Use o **Painel Master > Nova clínica** para registrar o tenant e o primeiro usuário. O painel aplica validação de senha, normaliza dados e registra auditoria. Não faça inserts manuais no SQL Editor durante a operação normal.
 
-```sql
+```text
 -- 1. Gerar UUIDs para o novo Tenant e Usuário
 -- (Substitua por novos UUIDs gerados ou use gen_random_uuid())
 DECLARE 
@@ -45,7 +60,9 @@ INSERT INTO tenants (
   id, 
   nome, 
   tipo, 
-  whatsapp_numero, 
+  whatsapp_numero,
+  owner_whatsapp,
+  evolution_instance_name,
   plano, 
   sistema_ativo, 
   horario_abertura, 
@@ -56,7 +73,9 @@ INSERT INTO tenants (
   new_tenant_id,
   'Nome do Piloto (Ex: Loja de Personalizados)',
   'loja', -- 'loja' ou 'clinica'
-  '5511999999999', -- WhatsApp Comercial (DDI + DDD + Número)
+  '5511999999999', -- WhatsApp Comercial (DDI + DDD + Numero)
+  '5511888888888', -- WhatsApp do dono/responsavel por alertas
+  'tenant_loja_personalizados', -- Nome exato da instancia na Evolution API
   'pro', -- plano contratado
   true,
   '08:00',
@@ -65,8 +84,7 @@ INSERT INTO tenants (
   '#db2777' -- Cor temática
 );
 
--- 3. Inserir o Usuário Dono (Senha inicial gerada com bcrypt hash)
--- Exemplo de hash para a senha 'senha123': '$2b$12$z2SjRUXlVwXGf6kZg4r9uO/vYfNqR14kL6V1WwA7S2W1K3'
+-- 3. Inserir o Usuário Dono (gere uma senha forte e o hash bcrypt com provision_tenant.py)
 INSERT INTO usuarios (
   id, 
   tenant_id, 
@@ -80,7 +98,7 @@ INSERT INTO usuarios (
   new_tenant_id,
   'Nome do Dono',
   'dono@email.com',
-  '$2b$12$z2SjRUXlVwXGf6kZg4r9uO/vYfNqR14kL6V1WwA7S2W1K3', -- Substituir pelo hash correto
+  'HASH_BCRYPT_GERADO_PELO_PROVISIONAMENTO', -- Nunca reutilize hashes ou senhas de exemplos
   'dono',
   true
 );
@@ -88,18 +106,21 @@ INSERT INTO usuarios (
 END;
 ```
 
+O bloco acima fica apenas como referência histórica e não deve ser executado em produção.
+
 ---
 
 ## 3. Configuração do Gateway Asaas
 
-1. Acesse a conta Asaas do Cliente/Tenant.
-2. Acesse **Configurações da Conta** > **Integrações** e gere a **Chave de API (Token)**. Salve como `ASAAS_API_KEY` no Railway.
+1. Configure primeiro uma conta Sandbox do Asaas e execute todo o roteiro de homologação.
+2. Gere a chave de API e salve-a somente no gerenciador de variáveis do Railway.
 3. Acesse **Configurações** > **Webhooks** > **Webhook de Cobranças**:
    - Defina a URL como: `https://<seu-backend-railway>/webhooks/asaas`.
    - Adicione os seguintes eventos obrigatórios:
      - `PAYMENT_RECEIVED` (recebimento confirmado).
      - `PAYMENT_OVERDUE` (vencimento/inadimplência).
    - Defina o token de segurança secreto e configure a variável `ASAAS_WEBHOOK_SECRET` no Railway correspondente.
+4. No Painel Master, abra **Cobrança** no cliente para criar a assinatura. O CPF/CNPJ é enviado diretamente ao Asaas e não é persistido pelo SaaS.
 
 ---
 
@@ -129,12 +150,11 @@ END;
      }
      ```
 
-### ⚠️ Aquecimento de Chip (Importante para evitar Ban do WhatsApp)
-O WhatsApp pode banir números novos que começam a disparar muitas mensagens repentinamente. Siga este protocolo de aquecimento na primeira semana:
-- **Dia 1 e 2**: Limite de 20 conversas ativas. Envie apenas para amigos/família e peça para que respondam para gerar histórico de conversa bidirecional legítimo.
-- **Dia 3 e 4**: Limite de 50 conversas. Intercale mensagens ativas e receptivas de clientes selecionados.
-- **Dia 5 em diante**: Aumente gradativamente até 100 mensagens/dia.
-- **Dica**: Utilize o delay embutido no `whatsapp_service.py` (randint 3-8s de digitação) que simula digitação humana para evitar detecção automatizada de bots.
+### Uso responsável do WhatsApp
+
+- Envie mensagens somente a contatos com base legal e consentimento quando aplicável.
+- Respeite opt-out, frequência razoável e as políticas vigentes do WhatsApp.
+- Não use automação para contornar mecanismos anti-spam. Para escala comercial e menor risco de bloqueio, planeje a migração para a API oficial do WhatsApp Business.
 
 ---
 

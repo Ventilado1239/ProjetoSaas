@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 from app.models.models import Tenant, AtendimentoPedido, ClientePaciente, ServicoProduto, ItemAtendimento, ListaEspera, EstadoConversa, LogMensagem
+from app.services.tenant_settings import get_evolution_instance_name
 from app.services.whatsapp_service import enviar_mensagem
 
 logger = logging.getLogger(__name__)
@@ -98,7 +99,12 @@ async def ofertar_horario(db_session: AsyncSession, tenant: Tenant, cancelled_ap
         f"⏳ Atenção: Esta oferta expira em 15 minutos!"
     )
     
-    await enviar_mensagem(str(tenant.id), client.whatsapp, reply)
+    await enviar_mensagem(
+        str(tenant.id),
+        client.whatsapp,
+        reply,
+        instance_name=get_evolution_instance_name(tenant.id, tenant),
+    )
     
     # Log message
     log = LogMensagem(
@@ -181,7 +187,12 @@ async def _run_timeout_waitlist(db: AsyncSession, tenant_id: uuid.UUID, wait_ent
                 
             # Notify expiration
             reply = "Infelizmente, o tempo para confirmation da vaga expirou e o horário foi oferecido para o próximo da fila. Caso deseje um novo agendamento, entre em contato! 🤝"
-            await enviar_mensagem(str(tenant_id), client.whatsapp, reply)
+            await enviar_mensagem(
+                str(tenant_id),
+                client.whatsapp,
+                reply,
+                instance_name=get_evolution_instance_name(tenant_id, tenant),
+            )
             
             log = LogMensagem(
                 id=uuid.uuid4(),
@@ -206,6 +217,11 @@ async def oferecer_vaga_lista_espera(db_session: AsyncSession, entry: ListaEsper
     sends the WhatsApp message, and schedules the 15-minute timeout.
     """
     try:
+        tenant = await db_session.get(Tenant, entry.tenant_id)
+        if not tenant:
+            logger.warning("Tenant nÃ£o encontrado para oferecer vaga.")
+            return False
+
         # Fetch client details
         stmt_client = select(ClientePaciente).where(ClientePaciente.id == entry.cliente_id)
         res_client = await db_session.execute(stmt_client)
@@ -260,7 +276,12 @@ async def oferecer_vaga_lista_espera(db_session: AsyncSession, entry: ListaEsper
             f"⏳ Atenção: Esta oferta expira em 15 minutos!"
         )
 
-        await enviar_mensagem(str(entry.tenant_id), client.whatsapp, reply)
+        await enviar_mensagem(
+            str(entry.tenant_id),
+            client.whatsapp,
+            reply,
+            instance_name=get_evolution_instance_name(entry.tenant_id, tenant),
+        )
 
         # Log message
         log = LogMensagem(
@@ -294,4 +315,3 @@ async def oferecer_vaga_lista_espera(db_session: AsyncSession, entry: ListaEsper
     except Exception as e:
         logger.exception(f"Erro ao processar oferta manual de vaga: {e}")
         return False
-

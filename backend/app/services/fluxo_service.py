@@ -11,13 +11,19 @@ from app.models.models import (
     AtendimentoPedido, ItemAtendimento, EstadoConversa, LogMensagem, ListaEspera, Aprovacao
 )
 from app.utils.mensagens import get_message
+from app.services.tenant_settings import get_evolution_instance_name, get_owner_whatsapp
 from app.services.whatsapp_service import enviar_mensagem
 
 logger = logging.getLogger(__name__)
 
 async def send_and_log(db: AsyncSession, tenant: Tenant, phone: str, reply: str):
     """Sends a message via WhatsApp and logs it in the database."""
-    await enviar_mensagem(str(tenant.id), phone, reply)
+    await enviar_mensagem(
+        str(tenant.id),
+        phone,
+        reply,
+        instance_name=get_evolution_instance_name(tenant.id, tenant),
+    )
     log_entry = LogMensagem(
         id=uuid.uuid4(),
         tenant_id=tenant.id,
@@ -44,7 +50,7 @@ async def processar_mensagem(
     message_clean = message_text.strip()
     
     # 0. Intercept owner manual decisions for large orders
-    if client_phone == "5511999999999":
+    if client_phone == get_owner_whatsapp(tenant):
         stmt_aprv = select(Aprovacao).where(
             Aprovacao.tenant_id == tenant.id,
             Aprovacao.tipo == "pedido_grande",
@@ -210,6 +216,7 @@ async def processar_mensagem(
             
             # Update waitlist status
             wait_entry.status = "agendado"
+            wait_entry.agendado_em = datetime.now(timezone.utc)
             
             reply = "Maravilha! Confirmamos seu agendamento com sucesso. Te aguardamos! 😊"
             await db.delete(state)
@@ -430,8 +437,10 @@ async def processar_mensagem(
             # Reset client status_reativacao to active/reativado and update last visit
             if client.status_reativacao in ["inativo_3m", "inativo_6m", "inativo_12m"]:
                 client.status_reativacao = "reativado"
+                client.reativado_em = datetime.now(timezone.utc)
             else:
                 client.status_reativacao = "ativo"
+                client.reativado_em = None
             client.ultima_consulta = datetime.now(timezone.utc)
 
             # Remove conversation state context

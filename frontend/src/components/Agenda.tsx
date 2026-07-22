@@ -4,7 +4,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Atendimento } from '../types';
 import api from '../services/api';
 import toast from '../services/toast';
-import { selectTenant, selectUpdateAtendimentoStatus } from '../store/selectors';
+import { EmptyState } from './EmptyState';
+import { selectTenant } from '../store/selectors';
 import { 
   Calendar, 
   Search, 
@@ -12,7 +13,8 @@ import {
   User, 
   ExternalLink, 
   ChevronRight,
-  X
+  X,
+  SearchX
 } from 'lucide-react';
 
 interface ClientProfile {
@@ -27,7 +29,6 @@ interface ClientProfile {
 export const Agenda: React.FC = () => {
   const queryClient = useQueryClient();
   const tenant = useStore(selectTenant);
-  const updateStatusStore = useStore(selectUpdateAtendimentoStatus);
 
   const [dateFilter, setDateFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -65,8 +66,7 @@ export const Agenda: React.FC = () => {
   const patchStatusMutation = useMutation({
     mutationFn: ({ id, status }: { id: string; status: string }) => 
       api.patch(`/atendimentos/${id}/status`, { status }),
-    onSuccess: (_, variables) => {
-      void updateStatusStore(variables.id, variables.status);
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['atendimentos'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       toast.success('Status do atendimento alterado!');
@@ -119,6 +119,21 @@ export const Agenda: React.FC = () => {
       case 'cancelado': return 'bg-rose-50 text-rose-600 border-rose-200/50';
       case 'abandonado': return 'bg-slate-100 text-slate-600 border-slate-200/50';
       default: return 'bg-slate-50 text-slate-600 border-slate-200/50';
+    }
+  };
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'aguardando': return 'Aguardando';
+      case 'confirmado': return 'Confirmado';
+      case 'em_producao': return tenant.tipo === 'clinica' ? 'Em atendimento' : 'Em produção';
+      case 'pronto': return tenant.tipo === 'clinica' ? 'Pronto para atendimento' : 'Pronto';
+      case 'realizado': return 'Realizado';
+      case 'entregue': return 'Entregue';
+      case 'falta': return 'Falta';
+      case 'cancelado': return 'Cancelado';
+      case 'abandonado': return 'Abandonado';
+      default: return status;
     }
   };
 
@@ -199,9 +214,9 @@ export const Agenda: React.FC = () => {
           <option value="">Todos os Status</option>
           <option value="aguardando">Aguardando</option>
           <option value="confirmado">Confirmado</option>
-          <option value="em_producao">Em Produção</option>
-          <option value="pronto">Pronto</option>
-          <option value="realizado">Realizado / Entregue</option>
+          {tenant.tipo === 'loja' && <option value="em_producao">Em Produção</option>}
+          {tenant.tipo === 'loja' && <option value="pronto">Pronto</option>}
+          <option value="realizado">{tenant.tipo === 'clinica' ? 'Realizado' : 'Realizado / Entregue'}</option>
           <option value="falta">Falta</option>
           <option value="cancelado">Cancelado</option>
           <option value="abandonado">Abandonado</option>
@@ -254,7 +269,7 @@ export const Agenda: React.FC = () => {
               {/* Status / Ações */}
               <div className="flex items-center justify-between sm:justify-end gap-3 pt-3 border-t border-border/50 sm:border-t-0 sm:pt-0">
                 <span className={`px-2.5 py-0.5 text-xs border rounded-full font-semibold ${getStatusBadgeClass(appt.status)}`}>
-                  {appt.status}
+                  {getStatusLabel(appt.status)}
                 </span>
 
                 <div className="flex items-center gap-1.5">
@@ -307,11 +322,11 @@ export const Agenda: React.FC = () => {
             </div>
           ))
         ) : (
-          <div className="p-12 text-center text-text-secondary text-sm flex flex-col items-center">
-            <span className="text-3xl mb-2">🔍</span>
-            <p className="font-medium text-text-primary mb-0.5">Nenhum agendamento encontrado.</p>
-            <p className="text-xs text-text-secondary">Tente alterar os termos da pesquisa ou filtros selecionados.</p>
-          </div>
+          <EmptyState
+            icon={SearchX}
+            title="Nenhum agendamento encontrado."
+            description="Tente ajustar a busca, a data ou o status selecionado."
+          />
         )}
       </div>
 
@@ -388,7 +403,7 @@ export const Agenda: React.FC = () => {
                           <span className="text-text-secondary block mt-0.5">Total: R$ {hAppt.total.toFixed(2)}</span>
                         </div>
                         <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold border ${getStatusBadgeClass(hAppt.status)}`}>
-                          {hAppt.status}
+                          {getStatusLabel(hAppt.status)}
                         </span>
                       </div>
                     ))}

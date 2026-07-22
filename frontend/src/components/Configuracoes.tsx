@@ -6,9 +6,6 @@ import type { Configuracoes as ConfigType } from '../types';
 import api from '../services/api';
 import toast from '../services/toast';
 import { 
-  selectFetchConfiguracoes,
-  selectUpdateConfiguracoes,
-  selectSetTenantActive,
   selectUser, 
   selectTenant 
 } from '../store/selectors';
@@ -19,15 +16,14 @@ import {
   Users, 
   ShieldAlert,
   Save,
+  Plug,
+  Phone,
   Trash2,
   X
 } from 'lucide-react';
 
 export const Configuracoes: React.FC = () => {
   const queryClient = useQueryClient();
-  const fetchConfiguracoesStore = useStore(selectFetchConfiguracoes);
-  const updateConfiguracoesStore = useStore(selectUpdateConfiguracoes);
-  const setTenantActiveStore = useStore(selectSetTenantActive);
   const user = useStore(selectUser);
   const tenant = useStore(selectTenant);
 
@@ -36,6 +32,8 @@ export const Configuracoes: React.FC = () => {
   const [confirmMsg, setConfirmMsg] = useState('');
   const [reactivateMsg, setReactivateMsg] = useState('');
   const [largeOrderLimit, setLargeOrderLimit] = useState(10);
+  const [ownerWhatsApp, setOwnerWhatsApp] = useState('');
+  const [evolutionInstanceName, setEvolutionInstanceName] = useState('');
 
   // Opening Hours State
   interface DaySchedule {
@@ -55,8 +53,8 @@ export const Configuracoes: React.FC = () => {
     nome: string;
     email: string;
     perfil: string;
+    ativo: boolean;
   }
-  const [usersList, setUsersList] = useState<LocalUser[]>([]);
   const [userModalOpen, setUserModalOpen] = useState(false);
   const [newUserName, setNewUserName] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
@@ -75,6 +73,13 @@ export const Configuracoes: React.FC = () => {
     staleTime: 60000,
   });
 
+  const { data: usersList = [] } = useQuery<LocalUser[]>({
+    queryKey: ['usuarios'],
+    queryFn: () => api.get('/usuarios').then(r => r.data),
+    enabled: user?.perfil === 'dono',
+    staleTime: 30000,
+  });
+
   // Sync settings when data arrives
   useEffect(() => {
     if (config) {
@@ -83,6 +88,8 @@ export const Configuracoes: React.FC = () => {
       setConfirmMsg(config.mensagem_confirmacao || '');
       setReactivateMsg(config.mensagem_reativacao || '');
       setLargeOrderLimit(config.limite_pedido_grande || 10);
+      setOwnerWhatsApp(config.owner_whatsapp || '');
+      setEvolutionInstanceName(config.evolution_instance_name || '');
       setSystemActiveState(config.sistema_ativo);
       
       if (config.horario_funcionamento) {
@@ -95,34 +102,11 @@ export const Configuracoes: React.FC = () => {
     }
   }, [config]);
 
-  // Load operators list
-  const loadUsers = async () => {
-    try {
-      setUsersList([
-        { id: '1', nome: 'Dono da Empresa', email: 'dono@empresa.com.br', perfil: 'dono' },
-        { id: '2', nome: 'Maria Auxiliadora', email: 'maria@empresa.com.br', perfil: 'recepcionista' },
-        { id: '3', nome: 'Dr. Lucas Silva', email: 'lucas@empresa.com.br', perfil: 'medico' }
-      ]);
-    } catch {
-      // ignore
-    }
-  };
-
-  useEffect(() => {
-    void loadUsers();
-    // Sync Zustand legacy (just to be safe)
-    void fetchConfiguracoesStore();
-  }, [fetchConfiguracoesStore]);
-
   // Update configuration mutation
   const updateSettingsMutation = useMutation({
     mutationFn: (payload: Record<string, unknown>) => api.put('/configuracoes', payload),
-    onSuccess: async (_, variables) => {
-      try {
-        await updateConfiguracoesStore(variables);
-      } catch {
-        // ignore
-      }
+    onSuccess: (response) => {
+      useStore.setState({ configuracoes: response.data });
       queryClient.invalidateQueries({ queryKey: ['configuracoes'] });
       toast.success('Configurações salvas com sucesso!');
     },
@@ -138,6 +122,8 @@ export const Configuracoes: React.FC = () => {
       mensagem_fora_horario: offlineMsg,
       mensagem_confirmacao: confirmMsg,
       mensagem_reativacao: reactivateMsg,
+      owner_whatsapp: ownerWhatsApp || null,
+      evolution_instance_name: evolutionInstanceName || null,
       horario_funcionamento: JSON.stringify(hours)
     });
   };
@@ -145,12 +131,11 @@ export const Configuracoes: React.FC = () => {
   // Toggle active tenant status mutation
   const activeTenantMutation = useMutation({
     mutationFn: (active: boolean) => api.put('/configuracoes', { sistema_ativo: active }),
-    onSuccess: async (_, active) => {
-      try {
-        await setTenantActiveStore(active);
-      } catch {
-        // ignore
-      }
+    onSuccess: (response, active) => {
+      useStore.setState((state) => ({
+        tenant: { ...state.tenant, sistemaAtivo: active },
+        configuracoes: response.data,
+      }));
       queryClient.invalidateQueries({ queryKey: ['configuracoes'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       setSystemActiveState(active);
@@ -174,30 +159,47 @@ export const Configuracoes: React.FC = () => {
     activeTenantMutation.mutate(!systemActiveState);
   };
 
+  const createUserMutation = useMutation({
+    mutationFn: (payload: { nome: string; email: string; password: string; perfil: string }) => api.post('/usuarios', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['usuarios'] });
+      setNewUserName('');
+      setNewUserEmail('');
+      setNewUserPassword('');
+      setUserModalOpen(false);
+      toast.success('Usuário cadastrado com sucesso!');
+    },
+    onError: (error: unknown) => {
+      const detail = (error as { response?: { data?: { detail?: string } } }).response?.data?.detail;
+      toast.error(detail || 'Erro ao cadastrar usuário.');
+    },
+  });
+
+  const deactivateUserMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/usuarios/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['usuarios'] });
+      toast.success('Usuário desativado e sessões revogadas.');
+    },
+    onError: (error: unknown) => {
+      const detail = (error as { response?: { data?: { detail?: string } } }).response?.data?.detail;
+      toast.error(detail || 'Erro ao desativar usuário.');
+    },
+  });
+
   const handleCreateUser = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newUserName || !newUserEmail || !newUserPassword) return;
-
-    const newUser = {
-      id: Math.random().toString(),
+    createUserMutation.mutate({
       nome: newUserName,
       email: newUserEmail,
-      perfil: newUserProfile
-    };
-    
-    setUsersList([...usersList, newUser]);
-    
-    // Reset forms
-    setNewUserName('');
-    setNewUserEmail('');
-    setNewUserPassword('');
-    setUserModalOpen(false);
-    toast.success('Usuário cadastrado com sucesso!');
+      password: newUserPassword,
+      perfil: newUserProfile,
+    });
   };
 
   const handleDeactivateUser = (id: string) => {
-    setUsersList(usersList.filter(u => u.id !== id));
-    toast.success('Usuário removido da lista local.');
+    deactivateUserMutation.mutate(id);
   };
 
   const toggleKillSwitch = () => {
@@ -358,7 +360,50 @@ export const Configuracoes: React.FC = () => {
 
         {/* Coluna 3: Limites, Usuários e Autenticação */}
         <div className="space-y-6">
-          
+
+          {/* WhatsApp / Operacao */}
+          <div className="bg-surface border border-border rounded-large p-5 shadow-xs space-y-4">
+            <h3 className="text-xs font-bold text-text-primary uppercase tracking-wider flex items-center gap-2">
+              <Plug size={16} className="text-text-secondary" />
+              Integração WhatsApp
+            </h3>
+
+            <div>
+              <label className="block text-xs font-bold text-text-secondary mb-1">
+                WhatsApp do responsável
+              </label>
+              <div className="relative">
+                <Phone size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary" />
+                <input
+                  type="tel"
+                  value={ownerWhatsApp}
+                  onChange={(e) => setOwnerWhatsApp(e.target.value.replace(/\D/g, ''))}
+                  placeholder="5511999999999"
+                  className="w-full h-10 pl-9 pr-3 border border-border rounded-medium bg-surface text-text-primary text-xs focus:outline-none focus:border-accent focus:ring-[3px] focus:ring-accent/15 font-mono"
+                />
+              </div>
+              <span className="text-[10px] text-text-secondary mt-1.5 block">
+                Recebe alertas de aprovação, relatórios, backup e cobrança.
+              </span>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-text-secondary mb-1">
+                Instância Evolution API
+              </label>
+              <input
+                type="text"
+                value={evolutionInstanceName}
+                onChange={(e) => setEvolutionInstanceName(e.target.value.trim())}
+                placeholder="clinica_sorriso"
+                className="w-full h-10 px-3 border border-border rounded-medium bg-surface text-text-primary text-xs focus:outline-none focus:border-accent focus:ring-[3px] focus:ring-accent/15 font-mono"
+              />
+              <span className="text-[10px] text-text-secondary mt-1.5 block">
+                Deve ser igual ao nome configurado na Evolution API.
+              </span>
+            </div>
+          </div>
+
           {/* Limite de Pedido Grande */}
           <div className="bg-surface border border-border rounded-large p-5 shadow-xs">
             <h3 className="text-xs font-bold text-text-primary uppercase tracking-wider mb-3 flex items-center gap-2">
@@ -383,6 +428,7 @@ export const Configuracoes: React.FC = () => {
           </div>
 
           {/* Usuários e Perfis */}
+          {user?.perfil === 'dono' && (
           <div className="bg-surface border border-border rounded-large p-5 shadow-xs space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold text-text-primary uppercase tracking-wider flex items-center gap-2">
@@ -412,6 +458,8 @@ export const Configuracoes: React.FC = () => {
                     {u.perfil !== 'dono' && (
                       <button
                         onClick={() => handleDeactivateUser(u.id)}
+                        disabled={deactivateUserMutation.isPending}
+                        aria-label={`Desativar ${u.nome}`}
                         className="p-1 text-text-secondary hover:text-rose-600 rounded-medium cursor-pointer"
                       >
                         <Trash2 size={12} />
@@ -422,6 +470,7 @@ export const Configuracoes: React.FC = () => {
               ))}
             </div>
           </div>
+          )}
 
           {/* Kill Switch (Admin Only) */}
           {user?.perfil === 'dono' && (
@@ -459,15 +508,16 @@ export const Configuracoes: React.FC = () => {
           <div className="bg-surface w-full max-w-md rounded-large border border-border p-6 shadow-lg relative">
             <div className="flex justify-between items-center mb-4 border-b border-border pb-3">
               <h3 className="text-sm font-semibold text-text-primary">Adicionar Novo Operador</h3>
-              <button onClick={() => setUserModalOpen(false)} className="p-1 rounded-full hover:bg-slate-50 text-text-secondary cursor-pointer">
+              <button onClick={() => setUserModalOpen(false)} aria-label="Fechar operador" className="p-1 rounded-full hover:bg-slate-50 text-text-secondary cursor-pointer">
                 <X size={16} />
               </button>
             </div>
             
             <form onSubmit={handleCreateUser} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-text-secondary uppercase mb-1">Nome Completo</label>
+                <label htmlFor="operador-nome" className="block text-xs font-bold text-text-secondary uppercase mb-1">Nome Completo</label>
                 <input
+                  id="operador-nome"
                   type="text"
                   required
                   placeholder="Nome do operador"
@@ -478,8 +528,9 @@ export const Configuracoes: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-text-secondary uppercase mb-1">E-mail Corporativo</label>
+                <label htmlFor="operador-email" className="block text-xs font-bold text-text-secondary uppercase mb-1">E-mail Corporativo</label>
                 <input
+                  id="operador-email"
                   type="email"
                   required
                   placeholder="operador@empresa.com.br"
@@ -490,11 +541,12 @@ export const Configuracoes: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-text-secondary uppercase mb-1">Senha Provisória</label>
+                <label htmlFor="operador-senha" className="block text-xs font-bold text-text-secondary uppercase mb-1">Senha Provisória</label>
                 <input
+                  id="operador-senha"
                   type="password"
                   required
-                  placeholder="Mínimo 6 caracteres"
+                  placeholder="Mínimo 12 caracteres, com letras e números"
                   value={newUserPassword}
                   onChange={(e) => setNewUserPassword(e.target.value)}
                   className="w-full h-10 px-3 border border-border rounded-medium bg-surface text-text-primary text-xs focus:outline-none focus:border-accent focus:ring-[3px] focus:ring-accent/15"
@@ -502,8 +554,9 @@ export const Configuracoes: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-text-secondary uppercase mb-1">Perfil / Permissões</label>
+                <label htmlFor="operador-perfil" className="block text-xs font-bold text-text-secondary uppercase mb-1">Perfil / Permissões</label>
                 <select
+                  id="operador-perfil"
                   value={newUserProfile}
                   onChange={(e) => setNewUserProfile(e.target.value)}
                   className="w-full h-10 px-3 border border-border rounded-medium bg-surface text-text-primary text-xs focus:outline-none focus:border-accent focus:ring-[3px] focus:ring-accent/15"
@@ -524,9 +577,10 @@ export const Configuracoes: React.FC = () => {
                 </button>
                 <button
                   type="submit"
+                  disabled={createUserMutation.isPending}
                   className="touch-target px-4 bg-accent hover:bg-accent-hover text-white text-xs font-semibold rounded-medium shadow-sm cursor-pointer"
                 >
-                  Criar Cadastro
+                  {createUserMutation.isPending ? 'Criando...' : 'Criar Cadastro'}
                 </button>
               </div>
             </form>

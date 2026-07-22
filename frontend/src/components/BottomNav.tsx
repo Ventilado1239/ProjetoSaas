@@ -82,6 +82,8 @@ export const BottomNav: React.FC = () => {
             <button
               key={tab.id}
               onClick={() => handleTabClick(tab.id)}
+              aria-label={tab.label}
+              aria-current={isActive ? 'page' : undefined}
               className="flex flex-col items-center justify-center flex-1 h-full relative cursor-pointer"
             >
               <div 
@@ -106,6 +108,8 @@ export const BottomNav: React.FC = () => {
         {/* More Tab */}
         <button
           onClick={() => setMenuOpen(!menuOpen)}
+          aria-label={menuOpen ? 'Fechar menu' : 'Abrir menu'}
+          aria-expanded={menuOpen}
           className="flex flex-col items-center justify-center flex-1 h-full cursor-pointer"
         >
           <div 
@@ -128,11 +132,12 @@ export const BottomNav: React.FC = () => {
             className="absolute inset-0" 
             onClick={() => setMenuOpen(false)}
           />
-          <div className="bg-surface w-full rounded-t-large border-t border-border p-6 relative z-10 animate-in slide-in-from-bottom duration-200">
+          <div className="bg-surface w-full rounded-t-large border-t border-border p-6 relative z-10 animate-in slide-in-from-bottom duration-200" role="dialog" aria-modal="true" aria-label="Mais opções">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-sm font-semibold text-text-primary">Outras Opções</h3>
               <button 
                 onClick={() => setMenuOpen(false)}
+                aria-label="Fechar menu"
                 className="p-1 rounded-full hover:bg-background text-text-secondary cursor-pointer"
               >
                 <X size={18} />
@@ -148,6 +153,7 @@ export const BottomNav: React.FC = () => {
                   <button
                     key={tab.id}
                     onClick={() => handleTabClick(tab.id)}
+                    aria-current={isActive ? 'page' : undefined}
                     className={`flex flex-col items-center p-4 border rounded-medium touch-target gap-2 justify-center transition-all cursor-pointer ${
                       isActive 
                         ? 'border-accent bg-accent-light text-accent font-semibold' 
