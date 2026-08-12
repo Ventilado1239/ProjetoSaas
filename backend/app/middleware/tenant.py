@@ -6,6 +6,11 @@ from app.utils.security import decode_token
 
 class TenantMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        # Liveness checks must not consume a database connection.
+        if request.url.path == "/health":
+            request.state.tenant_id = None
+            return await call_next(request)
+
         # 1. Attempt to extract tenant_id from JWT token in header or cookie
         tenant_id = None
         token = None

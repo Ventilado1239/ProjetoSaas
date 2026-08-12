@@ -6,6 +6,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import AsyncSessionLocal
 from app.models.models import Tenant, AtendimentoPedido, ClientePaciente, LogMensagem
+from app.services.tenant_settings import get_evolution_instance_name
 from app.services.whatsapp_service import enviar_mensagem
 
 logger = logging.getLogger(__name__)
@@ -98,7 +99,12 @@ async def _run_agradecimento(db: AsyncSession, tenant_id: uuid.UUID, appointment
         )
         
     # 3. Send message to customer
-    await enviar_mensagem(str(tenant_id), client.whatsapp, message)
+    await enviar_mensagem(
+        str(tenant_id),
+        client.whatsapp,
+        message,
+        instance_name=get_evolution_instance_name(tenant_id, tenant),
+    )
     
     # 4. Log message in database
     log = LogMensagem(

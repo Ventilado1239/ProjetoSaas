@@ -1,7 +1,16 @@
 import axios from 'axios';
 
+const defaultApiBaseURL =
+  typeof window !== 'undefined'
+    ? import.meta.env.PROD
+      ? window.location.origin
+      : `${window.location.protocol}//${window.location.hostname}:8000`
+    : 'http://localhost:8000';
+
+const apiBaseURL = import.meta.env.VITE_API_URL || defaultApiBaseURL;
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
+  baseURL: apiBaseURL,
   withCredentials: true,
   timeout: 10000,
   headers: {
@@ -25,7 +34,7 @@ const processQueue = (error: Error | null, token: string | null) => {
 
 const refreshToken = async () => {
   await axios.post(
-    `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/auth/refresh`,
+    `${apiBaseURL}/auth/refresh`,
     {},
     { withCredentials: true }
   );
@@ -37,12 +46,29 @@ const logout = () => {
   }
 };
 
+const logoutMaster = () => {
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('master_auth');
+    localStorage.removeItem('master_user');
+    window.dispatchEvent(new Event('master-auth-changed'));
+  }
+};
+
 // Response interceptor
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    const requestUrl = originalRequest?.url || '';
+    const isAuthEndpoint = requestUrl.includes('/auth/login') || requestUrl.includes('/auth/refresh');
+    const isMasterEndpoint = requestUrl.startsWith('/master/');
+
+    if (error.response?.status === 401 && isMasterEndpoint) {
+      logoutMaster();
+      return Promise.reject(error);
+    }
+
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthEndpoint && !isMasterEndpoint) {
       if (isRefreshing) {
         return new Promise<string | null>((resolve, reject) => {
           failedQueue.push({ 

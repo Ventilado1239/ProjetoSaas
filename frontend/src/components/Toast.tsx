@@ -62,7 +62,7 @@ export const ToastContainer: React.FC = () => {
   const toasts = useToastStore((state) => state.toasts);
 
   return (
-    <div className="fixed top-4 left-1/2 -translate-x-1/2 sm:left-auto sm:translate-x-0 sm:right-4 z-[9999] flex flex-col gap-2 max-w-full">
+    <div className="fixed bottom-[calc(76px+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 sm:bottom-auto sm:top-4 sm:left-auto sm:translate-x-0 sm:right-4 z-[9999] flex flex-col gap-2 max-w-full">
       {toasts.map((t) => (
         <Toast key={t.id} toast={t} />
       ))}

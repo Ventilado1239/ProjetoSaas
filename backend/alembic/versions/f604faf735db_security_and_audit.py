@@ -6,10 +6,9 @@ Create Date: 2026-06-03 10:48:14.485858
 
 """
 from typing import Sequence, Union
-import os
-
 from alembic import op
 import sqlalchemy as sa
+from app.config import settings
 
 
 # revision identifiers, used by Alembic.
@@ -62,24 +61,26 @@ def upgrade() -> None:
     """)
 
     # 4. Convert fields to bytea using pgp_sym_encrypt
-    key = os.getenv("JWT_SECRET", "8e6b12a7eb8c9d0d3f23a9d18e47bf923a1a1f0a1c6a2e4b8a2e1d7a9c8f6e2b")
+    key = settings.data_encryption_key
+    escaped_key = key.replace("'", "''")
     
     # Cast/encrypt nome
-    op.execute(f"ALTER TABLE clientes_pacientes ALTER COLUMN nome TYPE bytea USING pgp_sym_encrypt(nome, '{key}');")
+    op.execute(f"ALTER TABLE clientes_pacientes ALTER COLUMN nome TYPE bytea USING pgp_sym_encrypt(nome, '{escaped_key}');")
     
     # Cast/encrypt convenio (only if not null)
-    op.execute(f"ALTER TABLE clientes_pacientes ALTER COLUMN convenio TYPE bytea USING CASE WHEN convenio IS NOT NULL THEN pgp_sym_encrypt(convenio, '{key}') ELSE NULL END;")
+    op.execute(f"ALTER TABLE clientes_pacientes ALTER COLUMN convenio TYPE bytea USING CASE WHEN convenio IS NOT NULL THEN pgp_sym_encrypt(convenio, '{escaped_key}') ELSE NULL END;")
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    key = os.getenv("JWT_SECRET", "8e6b12a7eb8c9d0d3f23a9d18e47bf923a1a1f0a1c6a2e4b8a2e1d7a9c8f6e2b")
+    key = settings.data_encryption_key
+    escaped_key = key.replace("'", "''")
     
     # 1. Cast/decrypt convenio back to varchar(100)
-    op.execute(f"ALTER TABLE clientes_pacientes ALTER COLUMN convenio TYPE varchar(100) USING CASE WHEN convenio IS NOT NULL THEN pgp_sym_decrypt(convenio, '{key}') ELSE NULL END;")
+    op.execute(f"ALTER TABLE clientes_pacientes ALTER COLUMN convenio TYPE varchar(100) USING CASE WHEN convenio IS NOT NULL THEN pgp_sym_decrypt(convenio, '{escaped_key}') ELSE NULL END;")
     
     # 2. Cast/decrypt nome back to varchar(255)
-    op.execute(f"ALTER TABLE clientes_pacientes ALTER COLUMN nome TYPE varchar(255) USING pgp_sym_decrypt(nome, '{key}');")
+    op.execute(f"ALTER TABLE clientes_pacientes ALTER COLUMN nome TYPE varchar(255) USING pgp_sym_decrypt(nome, '{escaped_key}');")
 
     # 3. Drop RLS policy and table
     op.execute("DROP POLICY IF EXISTS tenant_isolation_policy ON logs_auditoria;")

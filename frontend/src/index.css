@@ -9,70 +9,87 @@
   --font-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   
-  --color-accent: hsl(var(--color-accent));
-  --color-accent-hover: hsl(var(--color-accent-hover));
-  --color-accent-light: hsl(var(--color-accent-light));
-  --color-success: hsl(var(--color-success));
-  --color-warning: hsl(var(--color-warning));
-  --color-danger: hsl(var(--color-danger));
-  --color-bg: hsl(var(--color-bg));
-  --color-surface: hsl(var(--color-surface));
-  --color-border: hsl(var(--color-border));
-  --color-text-primary: hsl(var(--color-text-primary));
-  --color-text-secondary: hsl(var(--color-text-secondary));
+  --color-accent: hsl(var(--app-color-accent));
+  --color-accent-hover: hsl(var(--app-color-accent-hover));
+  --color-accent-light: hsl(var(--app-color-accent-light));
+  --color-success: hsl(var(--app-color-success));
+  --color-warning: hsl(var(--app-color-warning));
+  --color-danger: hsl(var(--app-color-danger));
+  --color-success-light: hsl(var(--app-color-success-light));
+  --color-warning-light: hsl(var(--app-color-warning-light));
+  --color-danger-light: hsl(var(--app-color-danger-light));
+  --color-bg: hsl(var(--app-color-bg));
+  --color-background: hsl(var(--app-color-bg));
+  --color-surface: hsl(var(--app-color-surface));
+  --color-border: hsl(var(--app-color-border));
+  --color-text-primary: hsl(var(--app-color-text-primary));
+  --color-text-secondary: hsl(var(--app-color-text-secondary));
   
   --radius-small: 4px;
   --radius-medium: 6px;
   --radius-large: 10px;
   --radius-full: 9999px;
+
+  --shadow-2xs: 0 1px 2px rgb(15 23 42 / 0.04);
+  --shadow-xs: 0 1px 2px rgb(15 23 42 / 0.06), 0 1px 1px rgb(15 23 42 / 0.03);
+  --shadow-large: 0 24px 70px rgb(15 23 42 / 0.16), 0 8px 24px rgb(15 23 42 / 0.08);
 }
 
 /* Modo Clínica */
 [data-theme="clinica"] {
-  --color-accent: 221 83% 53%;        /* #2563eb */
-  --color-accent-hover: 221 83% 45%;
-  --color-accent-light: 214 100% 97%;
-  --color-success: 142 71% 45%;
-  --color-warning: 38 92% 50%;
-  --color-danger: 0 72% 51%;
-  --color-bg: 240 5% 96%;             /* #f4f4f5 */
-  --color-surface: 0 0% 100%;
-  --color-border: 240 6% 90%;
-  --color-text-primary: 240 10% 4%;
-  --color-text-secondary: 240 4% 46%;
+  --app-color-accent: 221 83% 53%;        /* #2563eb */
+  --app-color-accent-hover: 221 83% 45%;
+  --app-color-accent-light: 214 100% 97%;
+  --app-color-success: 142 71% 45%;
+  --app-color-warning: 38 92% 50%;
+  --app-color-danger: 0 72% 51%;
+  --app-color-success-light: 142 76% 96%;
+  --app-color-warning-light: 43 96% 95%;
+  --app-color-danger-light: 0 86% 97%;
+  --app-color-bg: 240 5% 96%;             /* #f4f4f5 */
+  --app-color-surface: 0 0% 100%;
+  --app-color-border: 240 6% 90%;
+  --app-color-text-primary: 240 10% 4%;
+  --app-color-text-secondary: 240 4% 46%;
 }
 
 /* Modo Loja */
 [data-theme="loja"] {
-  --color-accent: 262 83% 58%;        /* roxo vibrante */
-  --color-accent-hover: 262 83% 50%;
-  --color-accent-light: 262 100% 97%;
-  --color-success: 142 71% 45%;
-  --color-warning: 38 92% 50%;
-  --color-danger: 0 72% 51%;
-  --color-bg: 240 5% 96%;
-  --color-surface: 0 0% 100%;
-  --color-border: 240 6% 90%;
-  --color-text-primary: 240 10% 4%;
-  --color-text-secondary: 240 4% 46%;
+  --app-color-accent: 262 83% 58%;        /* roxo vibrante */
+  --app-color-accent-hover: 262 83% 50%;
+  --app-color-accent-light: 262 100% 97%;
+  --app-color-success: 142 71% 45%;
+  --app-color-warning: 38 92% 50%;
+  --app-color-danger: 0 72% 51%;
+  --app-color-success-light: 142 76% 96%;
+  --app-color-warning-light: 43 96% 95%;
+  --app-color-danger-light: 0 86% 97%;
+  --app-color-bg: 240 5% 96%;
+  --app-color-surface: 0 0% 100%;
+  --app-color-border: 240 6% 90%;
+  --app-color-text-primary: 240 10% 4%;
+  --app-color-text-secondary: 240 4% 46%;
 }
 
 :root {
   /* Default to clinica */
-  --color-accent: 221 83% 53%;
-  --color-accent-hover: 221 83% 45%;
-  --color-accent-light: 214 100% 97%;
-  --color-success: 142 71% 45%;
-  --color-warning: 38 92% 50%;
-  --color-danger: 0 72% 51%;
-  --color-bg: 240 5% 96%;
-  --color-surface: 0 0% 100%;
-  --color-border: 240 6% 90%;
-  --color-text-primary: 240 10% 4%;
-  --color-text-secondary: 240 4% 46%;
+  --app-color-accent: 221 83% 53%;
+  --app-color-accent-hover: 221 83% 45%;
+  --app-color-accent-light: 214 100% 97%;
+  --app-color-success: 142 71% 45%;
+  --app-color-warning: 38 92% 50%;
+  --app-color-danger: 0 72% 51%;
+  --app-color-success-light: 142 76% 96%;
+  --app-color-warning-light: 43 96% 95%;
+  --app-color-danger-light: 0 86% 97%;
+  --app-color-bg: 240 5% 96%;
+  --app-color-surface: 0 0% 100%;
+  --app-color-border: 240 6% 90%;
+  --app-color-text-primary: 240 10% 4%;
+  --app-color-text-secondary: 240 4% 46%;
   
-  background-color: hsl(var(--color-bg));
-  color: hsl(var(--color-text-primary));
+  background-color: hsl(var(--app-color-bg));
+  color: hsl(var(--app-color-text-primary));
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -88,11 +105,29 @@ body {
 
 /* Headings modern letters-spacing and fonts */
 h1, h2, h3, h4, h5, h6 {
-  letter-spacing: -0.011em;
+  letter-spacing: 0;
 }
 
 /* Transições globais */
 * { transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); }
+
+button,
+a,
+input,
+select,
+textarea {
+  transition-property: color, background-color, border-color, box-shadow, transform, opacity;
+  transition-duration: 150ms;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid hsl(var(--app-color-accent));
+  outline-offset: 2px;
+}
 
 /* Hover em cards */
 .card { transition: box-shadow 150ms, transform 150ms; }
@@ -100,11 +135,16 @@ h1, h2, h3, h4, h5, h6 {
 
 /* Fade-in de telas */
 .page-enter { animation: fadeIn 200ms ease-out; }
+.animate-fade-in { animation: fadeIn 180ms ease-out; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+.animate-in { animation-duration: 220ms; animation-fill-mode: both; animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1); }
+.slide-in-from-bottom { animation-name: slideInFromBottom; }
+@keyframes slideInFromBottom { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
 
 /* Shimmer de carregamento */
 .shimmer { 
-  background: linear-gradient(90deg, hsl(var(--color-bg)) 25%, hsl(var(--color-border)) 50%, hsl(var(--color-bg)) 75%); 
+  background: linear-gradient(90deg, hsl(var(--app-color-bg)) 25%, hsl(var(--app-color-border)) 50%, hsl(var(--app-color-bg)) 75%);
   background-size: 200% 100%; 
   animation: shimmer 1.5s infinite; 
 }
@@ -129,11 +169,11 @@ h1, h2, h3, h4, h5, h6 {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(var(--color-border));
+  background: hsl(var(--app-color-border));
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--color-text-secondary) / 0.5);
+  background: hsl(var(--app-color-text-secondary) / 0.5);
 }
 
 .touch-target {

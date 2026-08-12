@@ -9,14 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 from app.models.models import Tenant, LogMensagem
-from app.services.backup_service import gerar_backup_csv
+from app.config import settings
+from app.services.backup_service import encrypt_backup_content, gerar_backup_csv
+from app.services.tenant_settings import get_evolution_instance_name, get_owner_whatsapp
 from app.services.whatsapp_service import enviar_mensagem
 
 logger = logging.getLogger(__name__)
 
 SP_TZ = ZoneInfo("America/Sao_Paulo")
-DEFAULT_OWNER_PHONE = "5511999999999"
-BACKUP_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "backups")
+DEFAULT_BACKUP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "runtime-data", "backups"))
 
 
 async def processar_backups(db: Optional[AsyncSession] = None):
@@ -38,6 +39,10 @@ async def processar_backups(db: Optional[AsyncSession] = None):
 
 
 async def _run_backups(db: AsyncSession):
+    if not settings.BACKUP_ENCRYPTION_KEY:
+        logger.error("Backup ignorado: BACKUP_ENCRYPTION_KEY nao configurada.")
+        return
+    backup_dir = os.path.abspath(settings.BACKUP_DIR or DEFAULT_BACKUP_DIR)
     now_sp = datetime.now(SP_TZ)
     date_str = now_sp.strftime("%Y-%m-%d")
 
@@ -60,13 +65,14 @@ async def _run_backups(db: AsyncSession):
             backups = await gerar_backup_csv(db, tenant)
 
             # Create backup directory structure
-            tenant_dir = os.path.join(BACKUP_DIR, str(tenant.id), date_str)
+            tenant_dir = os.path.join(backup_dir, str(tenant.id), date_str)
             os.makedirs(tenant_dir, exist_ok=True)
 
             for filename, content in backups.items():
-                filepath = os.path.join(tenant_dir, filename)
+                encrypted_content = encrypt_backup_content(content, settings.BACKUP_ENCRYPTION_KEY)
+                filepath = os.path.join(tenant_dir, f"{filename}.enc")
                 with open(filepath, "wb") as f:
-                    f.write(content)
+                    f.write(encrypted_content)
 
             total_bytes = sum(len(v) for v in backups.values())
             total_files = len(backups)
@@ -78,12 +84,18 @@ async def _run_backups(db: AsyncSession):
                 f"📊 {total_bytes:,} bytes totais\n"
                 f"🔒 Armazenamento local seguro"
             )
-            await enviar_mensagem(str(tenant.id), DEFAULT_OWNER_PHONE, msg)
+            owner_phone = get_owner_whatsapp(tenant)
+            await enviar_mensagem(
+                str(tenant.id),
+                owner_phone,
+                msg,
+                instance_name=get_evolution_instance_name(tenant.id, tenant),
+            )
 
             log = LogMensagem(
                 id=uuid.uuid4(),
                 tenant_id=tenant.id,
-                cliente_whatsapp=DEFAULT_OWNER_PHONE,
+                cliente_whatsapp=owner_phone,
                 direcao="saida",
                 mensagem=msg,
                 tipo="texto"

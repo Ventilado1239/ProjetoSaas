@@ -4,10 +4,11 @@ from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.config import settings
 from app.middleware.tenant import TenantMiddleware
 from app.middleware.security import SecurityAndRateLimitMiddleware
-from app.routers import auth, whatsapp, webhooks, dashboard
+from app.routers import auth, whatsapp, webhooks, dashboard, master
 from app.tasks.scheduler import start_scheduler, shutdown_scheduler
 import app.middleware.auditoria
 
@@ -27,6 +28,10 @@ async def lifespan(app: FastAPI):
     start_scheduler()
     yield
     shutdown_scheduler()
+    from app.services.whatsapp_service import close_http_client
+    await close_http_client()
+    from app.services.asaas_service import close_http_client as close_asaas_http_client
+    await close_asaas_http_client()
 
 app = FastAPI(
     title="SaaS de Gestão via WhatsApp",
@@ -62,23 +67,27 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": str(exc)}
     )
 
+# Middleware is registered inner-to-outer by Starlette.
+app.add_middleware(TenantMiddleware)
+
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Webhook-Secret", "asaas-access-token"],
 )
 
-# 1. SecurityAndRateLimitMiddleware (pure ASGI, will run outer-most)
+# Rate limiting and origin validation run before opening a database session.
 app.add_middleware(SecurityAndRateLimitMiddleware)
 
-# 2. Tenant isolation middleware (runs inner-most to set pg session context)
-app.add_middleware(TenantMiddleware)
+# Reject forged Host headers at the outermost edge.
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts_list)
 
 # Register routers
 app.include_router(auth.router)
+app.include_router(master.router)
 app.include_router(whatsapp.router)
 app.include_router(webhooks.router)
 app.include_router(dashboard.router)

@@ -4,8 +4,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Servico, Preco } from '../types';
 import api from '../services/api';
 import toast from '../services/toast';
-import { selectTenant, selectCreateServico, selectUpdateServico } from '../store/selectors';
-import { Plus, Trash2, Edit2, X } from 'lucide-react';
+import { EmptyState } from './EmptyState';
+import { selectTenant } from '../store/selectors';
+import { Plus, Trash2, Edit2, X, PackageOpen } from 'lucide-react';
 
 interface PriceTier {
   qtd_min: number;
@@ -18,8 +19,6 @@ interface PriceTier {
 export const Servicos: React.FC = () => {
   const queryClient = useQueryClient();
   const tenant = useStore(selectTenant);
-  const createServicoStore = useStore(selectCreateServico);
-  const updateServicoStore = useStore(selectUpdateServico);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -49,17 +48,7 @@ export const Servicos: React.FC = () => {
         return api.post('/servicos', payload);
       }
     },
-    onSuccess: async (_, variables) => {
-      // Sync legacy Zustand
-      try {
-        if (editingId) {
-          await updateServicoStore(editingId, variables);
-        } else {
-          await createServicoStore(variables);
-        }
-      } catch {
-        // ignore
-      }
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['servicos'] });
       toast.success(editingId ? 'Serviço atualizado com sucesso!' : 'Serviço cadastrado com sucesso!');
       setModalOpen(false);
@@ -235,11 +224,11 @@ export const Servicos: React.FC = () => {
             </tbody>
           </table>
         ) : (
-          <div className="p-12 text-center text-text-secondary text-sm flex flex-col items-center">
-            <span className="text-3xl mb-2">📦</span>
-            <p className="font-semibold text-text-primary mb-0.5">Nenhum registro encontrado.</p>
-            <p className="text-xs text-text-secondary">Adicione itens para criar sua grade de valores.</p>
-          </div>
+          <EmptyState
+            icon={PackageOpen}
+            title="Nenhum registro encontrado."
+            description="Adicione serviços ou produtos para criar sua grade de valores."
+          />
         )}
       </div>
 

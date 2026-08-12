@@ -10,6 +10,7 @@ class SecurityAndRateLimitMiddleware:
         self.app = app
         self.ip_limits: Dict[str, List[float]] = defaultdict(list)
         self.tenant_limits: Dict[str, List[float]] = defaultdict(list)
+        self.login_limits: Dict[str, List[float]] = defaultdict(list)
         self.cleanup_counter = 0
 
     def _clean_expired(self, now: float):
@@ -27,12 +28,27 @@ class SecurityAndRateLimitMiddleware:
             else:
                 self.tenant_limits[tenant] = valid_times
 
+        for ip, times in list(self.login_limits.items()):
+            valid_times = [t for t in times if now - t < 300.0]
+            if not valid_times:
+                self.login_limits.pop(ip, None)
+            else:
+                self.login_limits[ip] = valid_times
+
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 
         headers_dict = dict(scope.get("headers", []))
+
+        # Browsers always send Origin on cross-origin unsafe requests. Rejecting
+        # unknown origins prevents credentialed CSRF even before CORS handling.
+        method = scope.get("method", "GET").upper()
+        origin = headers_dict.get(b"origin", b"").decode("utf-8")
+        if method in {"POST", "PUT", "PATCH", "DELETE"} and origin and origin not in settings.cors_origins_list:
+            await self._send_error(send, 403, "Origem nao permitida.")
+            return
         
         # 1. Get client IP
         client = scope.get("client")
@@ -69,6 +85,15 @@ class SecurityAndRateLimitMiddleware:
         if self.cleanup_counter >= 100:
             self.cleanup_counter = 0
             self._clean_expired(now)
+
+        path = scope.get("path", "")
+        if method == "POST" and path in {"/auth/login", "/master/auth/login"}:
+            attempts = [timestamp for timestamp in self.login_limits[ip] if now - timestamp < 300.0]
+            self.login_limits[ip] = attempts
+            if len(attempts) >= 20:
+                await self._send_error(send, 429, "Muitas tentativas de login. Tente novamente mais tarde.")
+                return
+            self.login_limits[ip].append(now)
 
         # Check IP Limit (100 req/min)
         ip_times = self.ip_limits[ip]
@@ -114,8 +139,12 @@ class SecurityAndRateLimitMiddleware:
                     b"strict-transport-security": b"max-age=63072000; includeSubDomains; preload",
                     b"x-content-type-options": b"nosniff",
                     b"x-frame-options": b"DENY",
-                    b"content-security-policy": b"default-src 'self'; frame-ancestors 'none';"
+                    b"content-security-policy": b"default-src 'none'; frame-ancestors 'none'; base-uri 'none';",
+                    b"referrer-policy": b"no-referrer",
+                    b"permissions-policy": b"camera=(), microphone=(), geolocation=()",
                 }
+                if path.startswith("/auth") or path.startswith("/master"):
+                    sec_headers[b"cache-control"] = b"no-store"
                 # Overwrite standard headers with security values
                 headers = [h for h in headers if h[0].lower() not in sec_headers]
                 for k, v in sec_headers.items():

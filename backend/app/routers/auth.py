@@ -1,19 +1,34 @@
 from datetime import datetime, timezone, timedelta
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Response, Request, status
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.models.models import Usuario, TokenBlacklist, Tenant
 from app.schemas.auth import LoginRequest, TokenResponse, UserResponse
 from app.utils.security import (
+    DUMMY_PASSWORD_HASH,
     verify_password,
     create_access_token,
     create_refresh_token,
     decode_token
 )
 from app.config import settings
+from app.dependencies import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@router.get("/me")
+async def me(current_user: Usuario = Depends(get_current_user)):
+    return {
+        "id": current_user.id,
+        "nome": current_user.nome,
+        "email": current_user.email,
+        "perfil": current_user.perfil,
+        "tenant_id": current_user.tenant_id,
+    }
 
 @router.post("/login")
 async def login(
@@ -23,18 +38,14 @@ async def login(
 ):
     # 1. Fetch user by email
     await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
-    stmt = select(Usuario).where(Usuario.email == login_data.email)
+    normalized_email = str(login_data.email).strip().lower()
+    stmt = select(Usuario).where(func.lower(Usuario.email) == normalized_email)
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
     
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Credenciais inválidas."
-        )
-        
-    # 2. Verify password
-    if not verify_password(login_data.password, user.senha_hash):
+    # Always run bcrypt to reduce account-enumeration timing differences.
+    password_valid = verify_password(login_data.password, user.senha_hash if user else DUMMY_PASSWORD_HASH)
+    if not user or not user.ativo or not password_valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Credenciais inválidas."
@@ -44,11 +55,15 @@ async def login(
     access_token_data = {
         "sub": str(user.id),
         "tenant_id": str(user.tenant_id),
-        "perfil": user.perfil
+        "perfil": user.perfil,
+        "scope": "tenant",
+        "ver": user.token_version,
     }
     refresh_token_data = {
         "sub": str(user.id),
-        "tenant_id": str(user.tenant_id)
+        "tenant_id": str(user.tenant_id),
+        "scope": "tenant",
+        "ver": user.token_version,
     }
     
     access_token = create_access_token(access_token_data)
@@ -62,7 +77,7 @@ async def login(
         value=access_token,
         httponly=True,
         secure=is_prod,
-        samesite="lax",
+        samesite="strict",
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         path="/"
     )
@@ -72,9 +87,9 @@ async def login(
         value=refresh_token,
         httponly=True,
         secure=is_prod,
-        samesite="lax",
+        samesite="strict",
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
-        path="/"
+        path="/auth"
     )
     
     # Return user details
@@ -113,7 +128,9 @@ async def refresh(
         
     jti = payload.get("jti")
     user_id_str = payload.get("sub")
-    tenant_id_str = payload.get("tenant_id")
+
+    if not jti or payload.get("scope", "tenant") != "tenant":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token de atualização inválido.")
     
     # 3. Check blacklist
     stmt = select(TokenBlacklist).where(TokenBlacklist.token == jti)
@@ -127,13 +144,19 @@ async def refresh(
         
     # Fetch the user to ensure they still exist
     await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
-    user_result = await db.execute(select(Usuario).where(Usuario.id == user_id_str))
+    try:
+        user_id = uuid.UUID(str(user_id_str))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token de atualizacao invalido.")
+    user_result = await db.execute(select(Usuario).where(Usuario.id == user_id))
     user = user_result.scalar_one_or_none()
-    if not user:
+    if not user or not user.ativo:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Usuário não encontrado."
         )
+    if payload.get("ver") != user.token_version:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sessao revogada.")
 
     # 4. Invalidate old refresh token (add to blacklist)
     exp_timestamp = payload.get("exp")
@@ -148,18 +171,26 @@ async def refresh(
     # 5. Generate new pair (Token Rotation)
     access_token_data = {
         "sub": user_id_str,
-        "tenant_id": tenant_id_str,
-        "perfil": user.perfil
+        "tenant_id": str(user.tenant_id),
+        "perfil": user.perfil,
+        "scope": "tenant",
+        "ver": user.token_version,
     }
     refresh_token_data = {
         "sub": user_id_str,
-        "tenant_id": tenant_id_str
+        "tenant_id": str(user.tenant_id),
+        "scope": "tenant",
+        "ver": user.token_version,
     }
     
     new_access_token = create_access_token(access_token_data)
     new_refresh_token = create_refresh_token(refresh_token_data)
     
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token de atualizacao ja utilizado.")
     
     # 6. Set new cookies
     is_prod = settings.ENVIRONMENT == "production"
@@ -169,7 +200,7 @@ async def refresh(
         value=new_access_token,
         httponly=True,
         secure=is_prod,
-        samesite="lax",
+        samesite="strict",
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         path="/"
     )
@@ -179,9 +210,9 @@ async def refresh(
         value=new_refresh_token,
         httponly=True,
         secure=is_prod,
-        samesite="lax",
+        samesite="strict",
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
-        path="/"
+        path="/auth"
     )
     
     return {"message": "Tokens atualizados com sucesso"}
@@ -213,6 +244,6 @@ async def logout(
                 
     # Delete cookies on client side
     response.delete_cookie(key="access_token", path="/")
-    response.delete_cookie(key="refresh_token", path="/")
+    response.delete_cookie(key="refresh_token", path="/auth")
     
     return {"message": "Logout realizado com sucesso"}

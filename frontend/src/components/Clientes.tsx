@@ -5,7 +5,8 @@ import { useDebounce } from '../hooks/useDebounce';
 import type { Cliente } from '../types';
 import api from '../services/api';
 import toast from '../services/toast';
-import { selectTenant, selectCreateCliente, selectDeleteClienteLGPD } from '../store/selectors';
+import { EmptyState } from './EmptyState';
+import { selectTenant } from '../store/selectors';
 import { 
   Search, 
   Plus, 
@@ -13,14 +14,13 @@ import {
   MessageSquare, 
   Phone,
   ShieldAlert,
-  X
+  X,
+  UsersRound
 } from 'lucide-react';
 
 export const Clientes: React.FC = () => {
   const queryClient = useQueryClient();
   const tenant = useStore(selectTenant);
-  const createClienteStore = useStore(selectCreateCliente);
-  const deleteClienteLGPDStore = useStore(selectDeleteClienteLGPD);
 
   const [searchInput, setSearchInput] = useState('');
   const debouncedSearch = useDebounce(searchInput, 300);
@@ -52,13 +52,7 @@ export const Clientes: React.FC = () => {
   // Create Client Mutation
   const createMutation = useMutation({
     mutationFn: (payload: Record<string, unknown>) => api.post('/clientes', payload),
-    onSuccess: async (_, variables) => {
-      // Sync Zustand (legacy)
-      try {
-        await createClienteStore(variables);
-      } catch {
-        // ignore
-      }
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clientes'] });
       toast.success('Cliente cadastrado com sucesso!');
       
@@ -80,13 +74,7 @@ export const Clientes: React.FC = () => {
   // Delete Client Mutation
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/clientes/${id}/lgpd`),
-    onSuccess: async (_, id) => {
-      // Sync Zustand (legacy)
-      try {
-        await deleteClienteLGPDStore(id);
-      } catch {
-        // ignore
-      }
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clientes'] });
       toast.success('Dados do cliente excluídos de forma definitiva.');
       setDeleteClient(null);
@@ -151,12 +139,16 @@ export const Clientes: React.FC = () => {
       return dateString;
     }
   };
+  const moneyFormatter = new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+  });
 
   return (
     <div className="space-y-6">
       
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold tracking-tight text-text-primary">
             {tenant.tipo === 'clinica' ? 'Pacientes Cadastrados' : 'Clientes Cadastrados'}
@@ -165,7 +157,7 @@ export const Clientes: React.FC = () => {
         </div>
         <button
           onClick={() => setCreateModalOpen(true)}
-          className="touch-target bg-accent hover:bg-accent-hover text-white text-xs font-semibold px-4 py-2 rounded-medium flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+          className="touch-target self-start sm:self-auto bg-accent hover:bg-accent-hover text-white text-xs font-semibold px-4 py-2 rounded-medium flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
         >
           <Plus size={16} />
           Cadastrar Novo
@@ -240,7 +232,7 @@ export const Clientes: React.FC = () => {
                   </div>
                   <div>
                     <span className="block text-[9px] uppercase font-bold text-text-secondary">Ticket Médio</span>
-                    <strong className="text-text-primary">R$ {Number(c.ticket_medio || 0).toFixed(2)}</strong>
+                    <strong className="text-text-primary">{moneyFormatter.format(Number(c.ticket_medio || 0))}</strong>
                   </div>
                   <div className="col-span-2 border-t border-border/50 pt-2 mt-2">
                     <span className="block text-[9px] uppercase font-bold text-text-secondary">Última Visita</span>
@@ -275,12 +267,12 @@ export const Clientes: React.FC = () => {
           ))}
         </div>
       ) : (
-        <div className="bg-surface border border-border rounded-large p-12 text-center text-text-secondary shadow-xs flex flex-col items-center">
-          <span className="text-3xl mb-2">👥</span>
-          <p className="font-semibold text-text-primary mb-0.5">Nenhum cliente cadastrado.</p>
-          <p className="text-xs text-text-secondary">
-            {searchInput ? `Nenhum cliente encontrado para "${searchInput}".` : 'Cadastre seu primeiro cliente para iniciar o monitoramento.'}
-          </p>
+        <div className="bg-surface border border-border rounded-large shadow-xs">
+          <EmptyState
+            icon={UsersRound}
+            title="Nenhum cliente cadastrado."
+            description={searchInput ? `Nenhum cliente encontrado para "${searchInput}".` : 'Cadastre seu primeiro cliente para iniciar o monitoramento.'}
+          />
         </div>
       )}
 
@@ -291,7 +283,7 @@ export const Clientes: React.FC = () => {
             
             <div className="flex justify-between items-center mb-4 border-b border-border pb-3">
               <h3 className="text-sm font-semibold text-text-primary">Cadastrar Novo Cliente</h3>
-              <button onClick={() => setCreateModalOpen(false)} className="p-1 rounded-full hover:bg-slate-50 text-text-secondary cursor-pointer">
+              <button onClick={() => setCreateModalOpen(false)} aria-label="Fechar cadastro" className="p-1 rounded-full hover:bg-slate-50 text-text-secondary cursor-pointer">
                 <X size={16} />
               </button>
             </div>
@@ -304,8 +296,9 @@ export const Clientes: React.FC = () => {
 
             <form onSubmit={handleCreateSubmit} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-text-secondary uppercase mb-1">Nome Completo</label>
+                <label htmlFor="cliente-nome" className="block text-xs font-bold text-text-secondary uppercase mb-1">Nome Completo</label>
                 <input
+                  id="cliente-nome"
                   type="text"
                   required
                   placeholder="Nome do cliente"
@@ -316,8 +309,9 @@ export const Clientes: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-text-secondary uppercase mb-1">WhatsApp (DDD + Número)</label>
+                <label htmlFor="cliente-whatsapp" className="block text-xs font-bold text-text-secondary uppercase mb-1">WhatsApp (DDD + Número)</label>
                 <input
+                  id="cliente-whatsapp"
                   type="text"
                   required
                   placeholder="Ex: 11999999999"
@@ -329,8 +323,9 @@ export const Clientes: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-text-secondary uppercase mb-1">Data Nascimento</label>
+                  <label htmlFor="cliente-nascimento" className="block text-xs font-bold text-text-secondary uppercase mb-1">Data Nascimento</label>
                   <input
+                    id="cliente-nascimento"
                     type="date"
                     value={newBirthDate}
                     onChange={(e) => setNewBirthDate(e.target.value)}
@@ -338,8 +333,9 @@ export const Clientes: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-text-secondary uppercase mb-1">Convênio / Detalhe</label>
+                  <label htmlFor="cliente-convenio" className="block text-xs font-bold text-text-secondary uppercase mb-1">Convênio / Detalhe</label>
                   <input
+                    id="cliente-convenio"
                     type="text"
                     placeholder="Particular, Bradesco..."
                     value={newConvenio}

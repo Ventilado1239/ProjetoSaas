@@ -468,7 +468,10 @@ async def test_large_order_owner_interception_flow(client, admin_session, db_ses
     assert aprv_post.status == "aprovado"
 
 @pytest.mark.asyncio
-async def test_asaas_kill_switch_blocking_workflow(client, admin_session, db_session):
+async def test_asaas_kill_switch_blocking_workflow(client, admin_session, db_session, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "ASAAS_WEBHOOK_SECRET", "test-asaas-webhook-secret")
+    asaas_headers = {"asaas-access-token": "test-asaas-webhook-secret"}
     # Setup clinic
     tenant, service, client_a, client_b = await setup_clinic_for_automations(admin_session)
     
@@ -477,7 +480,7 @@ async def test_asaas_kill_switch_blocking_workflow(client, admin_session, db_ses
     
     # 1. Post overdue webhook payload from Asaas
     overdue_payload = {
-        "event": "payment.overdue",
+        "event": "PAYMENT_OVERDUE",
         "payment": {
             "id": "pay_test123",
             "customer": "cus_test123",
@@ -488,7 +491,7 @@ async def test_asaas_kill_switch_blocking_workflow(client, admin_session, db_ses
         }
     }
     
-    res = await client.post("/webhooks/asaas", json=overdue_payload)
+    res = await client.post("/webhooks/asaas", json=overdue_payload, headers=asaas_headers)
     assert res.status_code == 200
     assert res.json()["status"] == "blocked"
     
@@ -497,6 +500,12 @@ async def test_asaas_kill_switch_blocking_workflow(client, admin_session, db_ses
     db_session.expire_all()
     db_tenant = await db_session.get(Tenant, tenant.id)
     assert db_tenant.sistema_ativo is False
+    assert db_tenant.pagamento_status == "inadimplente"
+
+    # Delivery is at-least-once: the same event must not trigger side effects twice.
+    duplicate = await client.post("/webhooks/asaas", json=overdue_payload, headers=asaas_headers)
+    assert duplicate.status_code == 200
+    assert duplicate.json()["status"] == "duplicate"
     
     # Attempting to interact via client webhook triggers out of service reply
     payload_client = {
@@ -523,7 +532,7 @@ async def test_asaas_kill_switch_blocking_workflow(client, admin_session, db_ses
     
     # 2. Post payment received webhook from Asaas
     received_payload = {
-        "event": "payment.received",
+        "event": "PAYMENT_RECEIVED",
         "payment": {
             "id": "pay_test123",
             "customer": "cus_test123",
@@ -532,7 +541,7 @@ async def test_asaas_kill_switch_blocking_workflow(client, admin_session, db_ses
         }
     }
     
-    res_rec = await client.post("/webhooks/asaas", json=received_payload)
+    res_rec = await client.post("/webhooks/asaas", json=received_payload, headers=asaas_headers)
     assert res_rec.status_code == 200
     assert res_rec.json()["status"] == "reactivated"
     
@@ -540,9 +549,33 @@ async def test_asaas_kill_switch_blocking_workflow(client, admin_session, db_ses
     db_session.expire_all()
     db_tenant_post = await db_session.get(Tenant, tenant.id)
     assert db_tenant_post.sistema_ativo is True
+    assert db_tenant_post.pagamento_status == "em_dia"
     
     # Client request works again
     clear_sent_messages()
+    payload_client["data"]["key"]["id"] = "MSG_AFTER_REACTIVATION"
     await post_webhook(client, payload_client)
     assert len(SENT_MESSAGES) == 1
     assert "indisponível" not in SENT_MESSAGES[0]["mensagem"].lower()
+
+
+@pytest.mark.asyncio
+async def test_tenant_export_is_written_encrypted_and_can_be_decrypted(admin_session, monkeypatch, tmp_path):
+    from app.config import settings
+    from app.services.backup_service import decrypt_backup_content
+    from app.tasks.backup_task import _run_backups
+
+    tenant, _, patient, _ = await setup_clinic_for_automations(admin_session)
+    backup_key = "test-backup-key-with-at-least-32-characters"
+    monkeypatch.setattr(settings, "BACKUP_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "BACKUP_ENCRYPTION_KEY", backup_key)
+
+    await _run_backups(admin_session)
+
+    encrypted_files = list(tmp_path.rglob("*.enc"))
+    assert len(encrypted_files) == 4
+    client_export = next(path for path in encrypted_files if path.name == "clientes.csv.enc")
+    encrypted_content = client_export.read_bytes()
+    assert patient.nome.encode("utf-8") not in encrypted_content
+    decrypted_content = decrypt_backup_content(encrypted_content, backup_key)
+    assert patient.nome.encode("utf-8") in decrypted_content

@@ -12,6 +12,8 @@ import { Sidebar } from './components/Sidebar';
 import { BottomNav } from './components/BottomNav';
 import { KillSwitchBanner } from './components/KillSwitchBanner';
 import { ToastContainer } from './components/Toast';
+import { MasterPanel } from './components/MasterPanel';
+import api from './services/api';
 
 // Lazy-load screens for code splitting & faster bundle loading
 const Dashboard = lazy(() => import('./components/Dashboard').then(m => ({ default: m.Dashboard })));
@@ -24,6 +26,12 @@ const Relatorios = lazy(() => import('./components/Relatorios').then(m => ({ def
 const Configuracoes = lazy(() => import('./components/Configuracoes').then(m => ({ default: m.Configuracoes })));
 
 const App: React.FC = () => {
+  const [isMasterAuthenticated, setIsMasterAuthenticated] = React.useState(
+    false
+  );
+  const [isMasterAuthChecking, setIsMasterAuthChecking] = React.useState(
+    () => localStorage.getItem('master_auth') === 'true'
+  );
   const isAuthenticated = useStore(selectIsAuthenticated);
   const activeTab = useStore(selectActiveTab);
   const tenant = useStore(selectTenant);
@@ -33,6 +41,47 @@ const App: React.FC = () => {
   useEffect(() => {
     checkAuth();
   }, [checkAuth]);
+
+  useEffect(() => {
+    const validateMasterSession = async () => {
+      if (localStorage.getItem('master_auth') !== 'true') {
+        setIsMasterAuthChecking(false);
+        return;
+      }
+      try {
+        await api.get('/master/me');
+        setIsMasterAuthenticated(true);
+      } catch {
+        localStorage.removeItem('master_auth');
+        localStorage.removeItem('master_user');
+        setIsMasterAuthenticated(false);
+      } finally {
+        setIsMasterAuthChecking(false);
+      }
+    };
+    void validateMasterSession();
+  }, []);
+
+  useEffect(() => {
+    const syncMasterAuth = () => {
+      setIsMasterAuthenticated(localStorage.getItem('master_auth') === 'true');
+    };
+    window.addEventListener('master-auth-changed', syncMasterAuth);
+    return () => window.removeEventListener('master-auth-changed', syncMasterAuth);
+  }, []);
+
+  if (isMasterAuthChecking) {
+    return <div className="min-h-screen grid place-items-center text-text-secondary">Validando sessão segura...</div>;
+  }
+
+  if (isMasterAuthenticated) {
+    return (
+      <>
+        <MasterPanel />
+        <ToastContainer />
+      </>
+    );
+  }
 
   // 1. Unauthenticated -> Login Screen
   if (!isAuthenticated) {

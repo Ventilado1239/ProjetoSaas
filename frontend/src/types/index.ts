@@ -144,6 +144,10 @@ export type ListaEspera = ListaEsperaEntry;
 
 export interface Configuracoes {
   id: string;
+  tenant_nome?: string;
+  tenant_tipo?: 'clinica' | 'loja';
+  tenant_cor_primaria?: string;
+  tenant_logo_url?: string;
   horario_funcionamento?: string;
   limite_pedido_grande: number;
   mensagem_boas_vindas?: string;
@@ -151,6 +155,8 @@ export interface Configuracoes {
   mensagem_confirmacao?: string;
   mensagem_reativacao?: string;
   sistema_ativo: boolean;
+  owner_whatsapp?: string;
+  evolution_instance_name?: string;
 }
 
 export interface ROIStats {

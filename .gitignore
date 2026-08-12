@@ -17,12 +17,18 @@ env/
 .coverage
 htmlcov/
 *.log
+backend/backups/
+backend/runtime-data/
+*.csv.enc
 
 # ========================================
 # Node / Frontend
 # ========================================
 node_modules/
 frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
 *.local
 .DS_Store
 

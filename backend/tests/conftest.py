@@ -1,12 +1,20 @@
 from typing import AsyncGenerator
+import os
 import pytest
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy import text, NullPool
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from app.config import settings
+from sqlalchemy.engine import make_url
 
 # Superuser engine (bypasses RLS, used for database seeding and cleanup)
-superuser_url = "postgresql+asyncpg://postgres:postgres@localhost:5432/projeto_saas"
+superuser_url = os.getenv("TEST_SUPERUSER_DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/projeto_saas_test")
+for candidate_url in (superuser_url, settings.DATABASE_URL):
+    database_name = make_url(candidate_url).database or ""
+    if not database_name.endswith("_test") and os.getenv("ALLOW_UNSAFE_TEST_DATABASE") != "1":
+        raise RuntimeError(
+            f"Testes destrutivos recusados no banco '{database_name}'. Use um banco cujo nome termine em _test."
+        )
 superuser_engine = create_async_engine(superuser_url, poolclass=NullPool)
 
 # Application/Test engine (connects as non-superuser, RLS is active)
@@ -41,6 +49,10 @@ async def admin_session() -> AsyncGenerator[AsyncSession, None]:
                 await session.execute(text("DELETE FROM aprovacoes;"))
                 await session.execute(text("DELETE FROM estados_conversa;"))
                 await session.execute(text("DELETE FROM token_blacklist;"))
+                await session.execute(text("DELETE FROM webhook_events;"))
+                await session.execute(text("DELETE FROM master_audit_logs;"))
+                await session.execute(text("DELETE FROM master_leads;"))
+                await session.execute(text("DELETE FROM master_admins;"))
                 await session.execute(text("DELETE FROM configuracoes;"))
                 await session.execute(text("DELETE FROM logs_mensagens;"))
                 await session.execute(text("DELETE FROM lista_espera;"))

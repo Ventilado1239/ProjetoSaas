@@ -3,11 +3,11 @@ import { useStore } from '../store/useStore';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import toast from '../services/toast';
+import { EmptyState } from './EmptyState';
 import type { DashboardData } from '../types';
 import { 
   selectSetActiveTab, 
-  selectTenant, 
-  selectUpdateAtendimentoStatus
+  selectTenant
 } from '../store/selectors';
 import { 
   CalendarDays, 
@@ -16,14 +16,14 @@ import {
   DollarSign, 
   User,
   Clock,
-  ArrowRight
+  ArrowRight,
+  CalendarX
 } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
   const queryClient = useQueryClient();
   const setActiveTab = useStore(selectSetActiveTab);
   const tenant = useStore(selectTenant);
-  const updateAtendimentoStatusStore = useStore(selectUpdateAtendimentoStatus);
 
   // React Query Fetch with 30s auto-refresh
   const { data: dashboard, isLoading } = useQuery<DashboardData>({
@@ -38,10 +38,7 @@ export const Dashboard: React.FC = () => {
   const patchStatusMutation = useMutation({
     mutationFn: ({ id, status }: { id: string; status: string }) => 
       api.patch(`/atendimentos/${id}/status`, { status }),
-    onSuccess: (_, variables) => {
-      // Sync local Zustand store state (legacy compat)
-      void updateAtendimentoStatusStore(variables.id, variables.status);
-      // Invalidate queries
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       queryClient.invalidateQueries({ queryKey: ['atendimentos'] });
       toast.success('Status do atendimento atualizado!');
@@ -78,8 +75,8 @@ export const Dashboard: React.FC = () => {
     switch (status) {
       case 'aguardando': return 'Aguardando';
       case 'confirmado': return 'Confirmado';
-      case 'em_producao': return 'Em Produção';
-      case 'pronto': return 'Pronto';
+      case 'em_producao': return tenant.tipo === 'clinica' ? 'Em atendimento' : 'Em Produção';
+      case 'pronto': return tenant.tipo === 'clinica' ? 'Pronto para atendimento' : 'Pronto';
       case 'realizado': return 'Realizado';
       case 'entregue': return 'Entregue';
       case 'falta': return 'Falta';
@@ -106,6 +103,10 @@ export const Dashboard: React.FC = () => {
   const revenueDia = dashboard?.receita_dia ?? dashboard?.receita_total ?? 0;
   const varAtendimentos = dashboard?.variacao_atendimentos ?? 0;
   const varReceita = dashboard?.variacao_receita ?? 0;
+  const moneyFormatter = new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+  });
 
   return (
     <div className="space-y-6">
@@ -136,7 +137,9 @@ export const Dashboard: React.FC = () => {
                 Aprovações Pendentes
               </h3>
               <p className="text-xs text-amber-700/80">
-                Há {pendingApprovals} pedido(s) aguardando liberação do administrador.
+                {tenant.tipo === 'clinica'
+                  ? `Há ${pendingApprovals} solicitação(ões) aguardando liberação administrativa.`
+                  : `Há ${pendingApprovals} pedido(s) aguardando liberação do administrador.`}
               </p>
             </div>
           </div>
@@ -155,7 +158,7 @@ export const Dashboard: React.FC = () => {
         {/* Atendimentos hoje */}
         <div 
           className="border border-border rounded-large p-5 shadow-xs hover:border-accent/20 transition-all duration-300 group card"
-          style={{ background: 'linear-gradient(135deg, hsl(var(--color-surface)) 0%, hsl(var(--color-accent-light)) 100%)' }}
+          style={{ background: 'linear-gradient(135deg, hsl(var(--app-color-surface)) 0%, hsl(var(--app-color-accent-light)) 100%)' }}
         >
           <div className="flex items-center justify-between text-text-secondary mb-3">
             <span className="text-[10px] font-bold uppercase tracking-wider">
@@ -180,7 +183,7 @@ export const Dashboard: React.FC = () => {
         {/* Confirmados */}
         <div 
           className="border border-border rounded-large p-5 shadow-xs hover:border-emerald-500/20 transition-all duration-300 group card"
-          style={{ background: 'linear-gradient(135deg, hsl(var(--color-surface)) 0%, hsl(var(--color-accent-light)) 100%)' }}
+          style={{ background: 'linear-gradient(135deg, hsl(var(--app-color-surface)) 0%, hsl(var(--app-color-accent-light)) 100%)' }}
         >
           <div className="flex items-center justify-between text-text-secondary mb-3">
             <span className="text-[10px] font-bold uppercase tracking-wider">Confirmados</span>
@@ -195,13 +198,15 @@ export const Dashboard: React.FC = () => {
               {apptsConfirmados}
             </p>
           )}
-          <span className="text-[12px] text-text-secondary">Presença ou produção confirmada</span>
+          <span className="text-[12px] text-text-secondary">
+            {tenant.tipo === 'clinica' ? 'Presença confirmada' : 'Presença ou produção confirmada'}
+          </span>
         </div>
 
         {/* Pendências */}
         <div 
           className="border border-border rounded-large p-5 shadow-xs hover:border-amber-500/20 transition-all duration-300 group card"
-          style={{ background: 'linear-gradient(135deg, hsl(var(--color-surface)) 0%, hsl(var(--color-accent-light)) 100%)' }}
+          style={{ background: 'linear-gradient(135deg, hsl(var(--app-color-surface)) 0%, hsl(var(--app-color-accent-light)) 100%)' }}
         >
           <div className="flex items-center justify-between text-text-secondary mb-3">
             <span className="text-[10px] font-bold uppercase tracking-wider">Pendentes</span>
@@ -222,7 +227,7 @@ export const Dashboard: React.FC = () => {
         {/* Receita do Dia */}
         <div 
           className="border border-border rounded-large p-5 shadow-xs hover:border-accent/20 transition-all duration-300 group card"
-          style={{ background: 'linear-gradient(135deg, hsl(var(--color-surface)) 0%, hsl(var(--color-accent-light)) 100%)' }}
+          style={{ background: 'linear-gradient(135deg, hsl(var(--app-color-surface)) 0%, hsl(var(--app-color-accent-light)) 100%)' }}
         >
           <div className="flex items-center justify-between text-text-secondary mb-3">
             <span className="text-[10px] font-bold uppercase tracking-wider">Receita</span>
@@ -234,7 +239,7 @@ export const Dashboard: React.FC = () => {
             <div className="h-8 w-32 shimmer rounded-medium my-1"></div>
           ) : (
             <p className="text-[32px] font-bold tracking-tight text-text-primary leading-none mb-1" style={{ letterSpacing: '-0.02em' }}>
-              R$ {revenueDia.toFixed(2)}
+              {moneyFormatter.format(revenueDia)}
             </p>
           )}
           <div className="text-[12px] text-text-secondary leading-none">
@@ -276,7 +281,9 @@ export const Dashboard: React.FC = () => {
                       </span>
                       <span className="text-xs text-text-secondary">•</span>
                       <span className="text-xs text-text-secondary truncate max-w-[120px] sm:max-w-xs">
-                        {appt.itens && appt.itens.length > 0 ? appt.itens.map(i => `${i.quantidade}x Item`).join(', ') : 'Serviço/Consulta'}
+                        {appt.itens && appt.itens.length > 0
+                          ? appt.itens.map(i => `${i.quantidade}x ${tenant.tipo === 'clinica' ? 'Procedimento' : 'Item'}`).join(', ')
+                          : tenant.tipo === 'clinica' ? 'Serviço/Consulta' : 'Item/Pedido'}
                       </span>
                     </div>
                   </div>
@@ -342,11 +349,12 @@ export const Dashboard: React.FC = () => {
             ))}
           </div>
         ) : (
-          <div className="p-12 text-center text-text-secondary text-sm bg-slate-50/20 flex flex-col items-center">
-            <span className="text-3xl mb-2">📅</span>
-            <p className="font-medium text-text-primary mb-0.5">Nenhum atendimento hoje.</p>
-            <p className="text-xs text-text-secondary">Que tal verificar a agenda de amanhã?</p>
-          </div>
+          <EmptyState
+            icon={CalendarX}
+            title="Nenhum atendimento hoje."
+            description="A agenda está livre para novos encaixes e acompanhamentos."
+            className="bg-slate-50/20"
+          />
         )}
       </div>
 

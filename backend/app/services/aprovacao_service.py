@@ -6,13 +6,11 @@ from sqlalchemy import select, text
 
 from app.database import AsyncSessionLocal
 from app.models.models import Tenant, AtendimentoPedido, ClientePaciente, ServicoProduto, ItemAtendimento, Aprovacao, LogMensagem
+from app.services.tenant_settings import get_evolution_instance_name, get_owner_whatsapp
 from app.services.whatsapp_service import enviar_mensagem
 from app.utils.mensagens import get_message
 
 logger = logging.getLogger(__name__)
-
-# Owner phone fallback (normally configured in tenant settings, but default to this for testing/demo)
-DEFAULT_OWNER_PHONE = "5511999999999"
 
 async def solicitar_aprovacao_pedido_grande(db_session, tenant: Tenant, order: AtendimentoPedido, client: ClientePaciente):
     """
@@ -56,7 +54,8 @@ async def solicitar_aprovacao_pedido_grande(db_session, tenant: Tenant, order: A
     await db_session.flush()
     
     # 2. Dispatch WhatsApp message to owner
-    owner_phone = DEFAULT_OWNER_PHONE # In production, query owner's profile phone or setting
+    owner_phone = get_owner_whatsapp(tenant)
+    instance_name = get_evolution_instance_name(tenant.id, tenant)
     
     reply = (
         f"🚨 *ALERTA DE PEDIDO GRANDE* 🚨\n\n"
@@ -70,7 +69,7 @@ async def solicitar_aprovacao_pedido_grande(db_session, tenant: Tenant, order: A
         f"👉 *2* para *RECUSAR* o pedido"
     )
     
-    await enviar_mensagem(str(tenant.id), owner_phone, reply)
+    await enviar_mensagem(str(tenant.id), owner_phone, reply, instance_name=instance_name)
     
     # Log message
     log = LogMensagem(
@@ -136,18 +135,32 @@ async def processar_decisao_dono(db_session, tenant: Tenant, aprv: Aprovacao, de
     
     if not order or not client:
         return
+
+    owner_phone = get_owner_whatsapp(tenant)
+    instance_name = get_evolution_instance_name(tenant.id, tenant)
         
     if decisao == "aprovar":
         order.lojista_aprovado = True
-        order.status = "em_producao"
+        order.status = "confirmado" if tenant.tipo == "clinica" else "em_producao"
+        if tenant.tipo == "clinica":
+            order.confirmado = True
         aprv.status = "aprovado"
         
         # Notify owner of success
-        await enviar_mensagem(str(tenant.id), DEFAULT_OWNER_PHONE, "Pedido aprovado com sucesso! Iniciando produção. 👍")
+        owner_reply = (
+            "Solicitação aprovada com sucesso! Atendimento confirmado. 👍"
+            if tenant.tipo == "clinica"
+            else "Pedido aprovado com sucesso! Iniciando produção. 👍"
+        )
+        await enviar_mensagem(str(tenant.id), owner_phone, owner_reply, simular_delay=False, instance_name=instance_name)
         
         # Notify client
-        client_reply = get_message("order_created_loja", produto="seu pedido")
-        await enviar_mensagem(str(tenant.id), client.whatsapp, client_reply)
+        client_reply = (
+            "Olá! Sua solicitação foi aprovada e o atendimento está confirmado. Até breve!"
+            if tenant.tipo == "clinica"
+            else get_message("order_created_loja", produto="seu pedido")
+        )
+        await enviar_mensagem(str(tenant.id), client.whatsapp, client_reply, simular_delay=False, instance_name=instance_name)
         
         # Log client message
         log = LogMensagem(
@@ -165,11 +178,15 @@ async def processar_decisao_dono(db_session, tenant: Tenant, aprv: Aprovacao, de
         aprv.status = "recusado"
         
         # Notify owner
-        await enviar_mensagem(str(tenant.id), DEFAULT_OWNER_PHONE, "Pedido recusado e cancelado. ❌")
+        await enviar_mensagem(str(tenant.id), owner_phone, "Pedido recusado e cancelado. ❌", simular_delay=False, instance_name=instance_name)
         
         # Notify client
-        client_reply = "Olá! Infelizmente não pudemos aprovar seu pedido neste momento por limitações de estoque ou capacidade. Agradecemos a compreensão!"
-        await enviar_mensagem(str(tenant.id), client.whatsapp, client_reply)
+        client_reply = (
+            "Olá! Infelizmente não conseguimos aprovar sua solicitação neste momento. Agradecemos a compreensão!"
+            if tenant.tipo == "clinica"
+            else "Olá! Infelizmente não pudemos aprovar seu pedido neste momento por limitações de estoque ou capacidade. Agradecemos a compreensão!"
+        )
+        await enviar_mensagem(str(tenant.id), client.whatsapp, client_reply, simular_delay=False, instance_name=instance_name)
         
         log = LogMensagem(
             id=uuid.uuid4(),
@@ -199,13 +216,20 @@ async def processar_timeout_aprovacao(tenant_id: uuid.UUID, aprv_id: uuid.UUID, 
             aprv = res.scalar_one_or_none()
             
             if aprv and aprv.status == "pendente":
+                tenant = await db.get(Tenant, tenant_id)
+                if not tenant:
+                    await db.commit()
+                    return
+
+                owner_phone = get_owner_whatsapp(tenant)
+                instance_name = get_evolution_instance_name(tenant.id, tenant)
                 details = json.loads(aprv.detalhes) if aprv.detalhes else {}
                 cliente_nome = details.get("cliente_nome", "Cliente")
                 
                 if acao == "lembrete":
                     # Send warning renotification
                     reply = f"⚠️ *LEMBRETE PENDENTE* ⚠️\n\nO pedido do cliente {cliente_nome} ainda aguarda sua aprovação. Responda 1 para APROVAR ou 2 para RECUSAR."
-                    await enviar_mensagem(str(tenant_id), DEFAULT_OWNER_PHONE, reply)
+                    await enviar_mensagem(str(tenant_id), owner_phone, reply, instance_name=instance_name)
                 elif acao == "escalar":
                     # Escalation: Log a critical warning or update details
                     # (In production, this triggers dashboard notification banners)

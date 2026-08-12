@@ -8,11 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 from app.models.models import Tenant, AtendimentoPedido, ClientePaciente, Aprovacao, LogMensagem
+from app.services.tenant_settings import get_evolution_instance_name, get_owner_whatsapp
 from app.services.whatsapp_service import enviar_mensagem
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_OWNER_PHONE = "5511999999999"
 
 async def processar_lembretes_diarios(db: Optional[AsyncSession] = None, current_time: Optional[datetime] = None):
     """
@@ -133,8 +132,13 @@ async def _run_lembretes(db: AsyncSession, current_time: Optional[datetime] = No
         )
         
         # Send message to owner
-        owner_phone = DEFAULT_OWNER_PHONE
-        await enviar_mensagem(str(tenant.id), owner_phone, summary_msg)
+        owner_phone = get_owner_whatsapp(tenant)
+        await enviar_mensagem(
+            str(tenant.id),
+            owner_phone,
+            summary_msg,
+            instance_name=get_evolution_instance_name(tenant.id, tenant),
+        )
         
         # Log outgoing message
         log = LogMensagem(
