@@ -10,11 +10,11 @@ Automatiza atendimento, agendamento, confirmações, reativação de clientes in
 
 O mercado de bots de WhatsApp virou commodity. Este produto se posiciona como um **sistema de retenção e reativação que gera ROI mensurável** para o cliente.
 
-**Exemplo real:** Uma clínica com 25% de faltas que reduz para 10% recupera ~R$10.560/mês. O sistema custa R$997/mês. ROI de 10x — impossível de cancelar.
+**Cenário ilustrativo:** uma clínica que reduza faltas de 25% para 10% pode recuperar receita antes perdida. O impacto real depende de volume, ticket médio, adesão dos pacientes e custos de operação.
 
 ### ✨ Funcionalidades Principais
 
-- **Atendimento automatizado via WhatsApp** — comportamento indistinguível de atendente humano
+- **Atendimento automatizado via WhatsApp** — respostas contextuais, fluxos configuráveis e encaminhamento para atendimento humano
 - **Agendamento inteligente** com confirmação e lembretes automáticos
 - **Reativação de clientes inativos** — reconquista automática com mensagens personalizadas
 - **Dashboard em tempo real** — métricas, agenda, relatórios e ROI mensal
